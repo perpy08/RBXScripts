@@ -111,6 +111,8 @@ end)
 -- THE REAL 3FPS GLITCH ENGINE
 local FPS = 3
 local FRAME_DURATION = 1 / FPS
+local lastGlobalTick = 0
+local snappedCFrame = nil
 
 local function createGhostClone(char)
     if not char then return end
@@ -124,9 +126,9 @@ local function createGhostClone(char)
             part.CanCollide = false
             part.CanTouch = false
             part.CanQuery = false
-            part.Transparency = 0.6
+            part.Transparency = 0.5
             part.Color = Color3.fromRGB(150, 150, 255)
-            TweenService:Create(part, TweenInfo.new(0.3), {Transparency = 1}):Play()
+            TweenService:Create(part, TweenInfo.new(0.3), {Transparency = 1, Size = part.Size * 0.8}):Play()
         elseif part:IsA("Decal") or part:IsA("Texture") then
             part:Destroy()
         end
@@ -135,6 +137,30 @@ local function createGhostClone(char)
     clone.Parent = workspace
     game:GetService("Debris"):AddItem(clone, 0.3)
 end
+
+-- Global Heartbeat for CFrame Snapping and Ghosting
+RunService.Heartbeat:Connect(function()
+    if not ProfileSettings.GlitchActive then 
+        snappedCFrame = nil
+        return 
+    end
+    
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    if os.clock() - lastGlobalTick >= FRAME_DURATION then
+        lastGlobalTick = os.clock()
+        snappedCFrame = root.CFrame
+        createGhostClone(char)
+    end
+    
+    -- FORCE the character to snap to the last tick's position/rotation
+    -- This kills the "smoothness" of turning and jumping
+    if snappedCFrame then
+        root.CFrame = snappedCFrame
+    end
+end)
 
 local function applyLagEffect(track)
     local lastUpdate = 0
@@ -151,11 +177,6 @@ local function applyLagEffect(track)
                 local skip = 0.15 + (math.random() * 0.1)
                 track.TimePosition = track.TimePosition + skip
                 lastUpdate = os.clock()
-                
-                -- Trigger Ghost Clone on the tick!
-                if LocalPlayer.Character then
-                    createGhostClone(LocalPlayer.Character)
-                end
             end
         else
             track:AdjustSpeed(1.0)
