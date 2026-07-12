@@ -138,27 +138,18 @@ local function createGhostClone(char)
     game:GetService("Debris"):AddItem(clone, 0.3)
 end
 
--- Global Heartbeat for CFrame Snapping and Ghosting
+-- Global Heartbeat for Visual Ghosting (No more movement locking!)
 RunService.Heartbeat:Connect(function()
     if not ProfileSettings.GlitchActive then 
-        snappedCFrame = nil
         return 
     end
     
     local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+    if not char then return end
     
     if os.clock() - lastGlobalTick >= FRAME_DURATION then
         lastGlobalTick = os.clock()
-        snappedCFrame = root.CFrame
         createGhostClone(char)
-    end
-    
-    -- FORCE the character to snap to the last tick's position/rotation
-    -- This kills the "smoothness" of turning and jumping
-    if snappedCFrame then
-        root.CFrame = snappedCFrame
     end
 end)
 
