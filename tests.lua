@@ -108,9 +108,8 @@ task.spawn(function()
     end
 end)
 
--- VISUAL-ONLY GLITCH ENGINE (NO MOVEMENT LOCKING)
-local FPS = 3
-local FRAME_DURATION = 1 / FPS
+-- DYNAMIC GLITCH ENGINE
+local BASE_FRAME_DURATION = 0.33
 local lastGlobalTick = 0
 
 local function createGhostClone(char)
@@ -137,16 +136,24 @@ local function createGhostClone(char)
     game:GetService("Debris"):AddItem(clone, 0.3)
 end
 
--- This loop ONLY creates visuals. It NEVER touches the player's CFrame or Velocity.
 RunService.Heartbeat:Connect(function()
-    if not ProfileSettings.GlitchActive then 
-        return 
-    end
+    if not ProfileSettings.GlitchActive then return end
     
     local char = LocalPlayer.Character
     if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local rootPart = char:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not rootPart then return end
+
+    -- Fix 1: Only activate ghosting if moving or jumping (Velocity check)
+    local isMoving = humanoid.MoveDirection.Magnitude > 0 or rootPart.Velocity.Magnitude > 0.1
+    if not isMoving then return end
     
-    if os.clock() - lastGlobalTick >= FRAME_DURATION then
+    -- Fix 2: Dynamic interval based on current speed mode/multiplier
+    local currentMult = (ProfileSettings.SpeedMode == "Fast") and ProfileSettings.CurrentSpeedMultiplier or ProfileSettings.SlowSpeedMultiplier
+    local dynamicDuration = BASE_FRAME_DURATION / math.clamp(currentMult, 0.1, 5)
+    
+    if os.clock() - lastGlobalTick >= dynamicDuration then
         lastGlobalTick = os.clock()
         createGhostClone(char)
     end
@@ -163,8 +170,12 @@ local function applyLagEffect(track)
         
         if ProfileSettings.GlitchActive then
             track:AdjustSpeed(0)
-            if os.clock() - lastUpdate >= FRAME_DURATION then
-                local skip = 0.15 + (math.random() * 0.1)
+            -- Animation stutter also scales with speed multiplier for consistency
+            local currentMult = (ProfileSettings.SpeedMode == "Fast") and ProfileSettings.CurrentSpeedMultiplier or ProfileSettings.SlowSpeedMultiplier
+            local skipInterval = 0.15 / math.clamp(currentMult, 0.1, 5)
+            
+            if os.clock() - lastUpdate >= skipInterval then
+                local skip = 0.1 + (math.random() * 0.1)
                 track.TimePosition = track.TimePosition + skip
                 lastUpdate = os.clock()
             end
@@ -174,7 +185,6 @@ local function applyLagEffect(track)
     end)
 end
 
--- Hook into Humanoid for Animations and Speed
 local function ManageCharacter(character)
     local humanoid = character:WaitForChild("Humanoid", 5)
     local rootPart = character:WaitForChild("HumanoidRootPart", 5)
@@ -464,7 +474,6 @@ local function updateSlowSlider(input)
     local trackWidth = SlowSliTrack.AbsoluteSize.X
     local relativeX = input.Position.X - SlowSliTrack.AbsolutePosition.X
     local percentage = math.clamp(relativeX / trackWidth, 0, 1)
-    -- Right (1.0) = Normal, Left (0.0) = 0.25x
     local rawValue = 0.25 + (percentage * 0.75)
     local snapValue = math.floor((rawValue * 20) + 0.5) / 20
     local finalPercentage = (snapValue - 0.25) / 0.75
