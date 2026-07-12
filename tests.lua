@@ -256,21 +256,31 @@ ProximityPromptService.PromptShown:Connect(function(prompt)
     end
 end)
 
-UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-    if gameProcessedEvent then return end
-    if input.KeyCode == Enum.KeyCode.Space and ProfileSettings.MultiJumpActive then
-        local character = LocalPlayer.Character
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-        
-        if humanoid and rootPart then
-            local state = humanoid:GetState()
-            if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
-                if jumpCount < maxBonusJumps then
-                    jumpCount = jumpCount + 1
-                    rootPart.Velocity = Vector3.new(rootPart.Velocity.X, humanoid.JumpPower, rootPart.Velocity.Z)
-                end
-            end
+-- Infinite Flight / Soft Land Logic
+RunService.Heartbeat:Connect(function()
+    if not ProfileSettings.MultiJumpActive then return end
+    
+    local char = LocalPlayer.Character
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not rootPart then return end
+
+    -- 1. Continuous Ascent (Hold Space)
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+        local state = humanoid:GetState()
+        if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+            -- Apply upward force every frame while space is held
+            rootPart.Velocity = Vector3.new(rootPart.Velocity.X, humanoid.JumpPower * 0.8, rootPart.Velocity.Z)
+        end
+    end
+
+    -- 2. Soft Land / Velocity Kill
+    -- If we are falling fast and close to the ground, dampen the speed
+    if rootPart.Velocity.Y < -50 then 
+        local ray = Ray.new(rootPart.Position, Vector3.new(0, -10, 0))
+        local part = workspace:FindPartOnRay(ray, char)
+        if part then
+            rootPart.Velocity = Vector3.new(rootPart.Velocity.X, -5, rootPart.Velocity.Z)
         end
     end
 end)
