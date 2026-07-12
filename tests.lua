@@ -129,7 +129,7 @@ local function applyLagEffect(track)
                 lastUpdate = os.clock()
             end
         else
-            track:AdjustSpeed(1.0) -- Keep animations normal
+            track:AdjustSpeed(1.0)
         end
     end)
 end
