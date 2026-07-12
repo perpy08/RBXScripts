@@ -23,7 +23,7 @@ local ProfileSettings = {
     KillGlowActive = false, 
     GlitchActive = false, 
     FastMineActive = false,
-    MineSpeedMultiplier = 1.0,
+    MineSpeedMultiplier = 1,
     CurrentSpeedMultiplier = 1.0,
     SlowSpeedMultiplier = 1.0,
     SpeedMode = "Fast" -- "Fast" or "Slow"
@@ -109,6 +109,33 @@ task.spawn(function()
         end
         task.wait(3)
     end
+end)
+
+-- FAST MINE LOGIC (Surgical Implementation)
+RunService.Heartbeat:Connect(function()
+    if not ProfileSettings.FastMineActive then return end
+    
+    local char = LocalPlayer.Character
+    if not char then return end
+    
+    -- Target known controllers/attributes
+    pcall(function()
+        -- Try to find and modify mining attributes on the player or character
+        local mineSpeedAttr = char:FindFirstChild("MineSpeed") or LocalPlayer:FindFirstChild("MineSpeed")
+        if mineSpeedAttr and mineSpeedAttr:IsA("NumberValue") then
+            mineSpeedAttr.Value = 1 * ProfileSettings.MineSpeedMultiplier
+        end
+        
+        -- Attempt to find the Controller in the environment (if accessible locally)
+        -- This targets the logic found in 'FastMineBoostController' and 'CrystalMiningController'
+        for _, obj in ipairs(game:GetDescendants()) do
+            if obj.Name == "FastMineBoostController" or obj.Name == "CrystalMiningController" then
+                if obj:IsA("ModuleScript") then
+                    -- Note: We can't easily edit Module scripts at runtime, but we can look for their settings values
+                end
+            end
+        end
+    end)
 end)
 
 -- DYNAMIC GLITCH ENGINE
@@ -282,23 +309,23 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ---------------------------------------------------------------------
---  SUPREME ANTI-RAGDOLL & GLOW KILLER (MAXIMALIST EDITION)
+--  SUPREME ANTI-RAGDOLL & GLOW KILLER
 -- ---------------------------------------------------------------------
 RunService.Heartbeat:Connect(function()
-    -- 1. RAGDOLL EXTERMINATOR (Targeting Blueprints, Factory, and Client System)
+    -- 1. RAGDOLL EXTERMINATOR (Targeting RagdollSystemClient and R15RagdollBlueprint)
     if ProfileSettings.NoRagdollActive then
         local char = LocalPlayer.Character
         if char then
-            -- Destroy all constraints and joints that cause ragdolling
             for _, obj in ipairs(char:GetDescendants()) do
-                if obj:IsA("BallSocketConstraint") or obj:IsA("HingeConstraint") or obj:IsA("SpringConstraint") or obj:IsA("Solder") or obj.Name:find("Ragdoll") or obj.Name:find("Blueprint") then
+                if obj:IsA("BallSocketConstraint") or obj:IsA("HingeConstraint") or obj:IsA("SpringConstraint") or 
+                   obj:IsA("Solder") or obj.Name:find("Ragdoll") or obj.Name:find("Blueprint") or obj.Name:find("RagdollSystem") then
                     obj:Destroy()
                 end
             end
         end
     end
 
-    -- 2. GLOW KILLER CORE (Total Neon Neutralization)
+    -- 2. GLOW KILLER CORE
     if ProfileSettings.KillGlowActive then
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
@@ -314,7 +341,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ---------------------------------------------------------------------
---  3. GRAPHICAL USER INTERFACE (ZEN PASTEL EDITION - PRECISION LAYOUT)
+--  3. GRAPHICAL USER INTERFACE (ZEN PASTEL EDITION - PRECISION SPACING)
 -- ---------------------------------------------------------------------
 
 local ScreenGui = Instance.new("ScreenGui")
@@ -325,7 +352,7 @@ ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 320, 0, 650) 
 MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
-MainFrame.BackgroundColor3 = Color3.fromRGB(230, 255, 230) -- Light Pastel Green
+MainFrame.BackgroundColor3 = Color3.fromRGB(230, 255, 230) 
 MainFrame.Active = true
 MainFrame.Draggable = true 
 MainFrame.Parent = ScreenGui
@@ -333,7 +360,7 @@ Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
 
 local HeaderLabel = Instance.new("TextLabel")
 HeaderLabel.Size = UDim2.new(1, 0, 0, 40)
-HeaderLabel.BackgroundColor3 = Color3.fromRGB(180, 230, 180) -- Medium Pastel Green
+HeaderLabel.BackgroundColor3 = Color3.fromRGB(180, 230, 180) 
 HeaderLabel.Text = "Mine A Mountain - Zen Edition"
 HeaderLabel.TextColor3 = Color3.fromRGB(60, 120, 60)
 HeaderLabel.Font = Enum.Font.SourceSansBold
@@ -345,7 +372,7 @@ local ScrollFrame = Instance.new("ScrollingFrame")
 ScrollFrame.Size = UDim2.new(1, 0, 1, -40)
 ScrollFrame.Position = UDim2.new(0, 0, 0, 40)
 ScrollFrame.BackgroundTransparency = 1
-ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 900) -- INCREASED CANVAS
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 950) 
 ScrollFrame.ScrollBarThickness = 4
 ScrollFrame.Parent = MainFrame
 
@@ -369,6 +396,7 @@ local function createToggle(name, positionY, callback)
         Button.Text = name .. (toggled and ": ON" or ": OFF")
         callback(toggled)
     end)
+    return Button
 end
 
 local function createButton(name, positionY, callback)
@@ -383,7 +411,7 @@ local function createButton(name, positionY, callback)
     Button.MouseButton1Click:Connect(callback)
 end
 
--- RIGID POSITIONING SYSTEM (No more smushing!)
+-- RIGID POSITIONING SYSTEM (40px increments)
 createToggle("Auto Buy Bombs", 10, function(s) ProfileSettings.AutoBuyActive = s end)
 createToggle("Instant E-Mining", 50, function(s) ProfileSettings.InstantInteractions = s end)
 createToggle("Infinite Multi-Jump", 90, function(s) ProfileSettings.MultiJumpActive = s end)
@@ -402,9 +430,10 @@ createToggle("Glitch Lag FX", 290, function(s)
         end
     end
 end)
-createToggle("Fast Mine", 330, function(s) ProfileSettings.FastMineActive = s end)
 
--- Speed Mode Selector (Positioned at 370 - Clearly Separated)
+local MineToggle = createToggle("Fast Mine", 330, function(s) ProfileSettings.FastMineActive = s end)
+
+-- Speed Mode Selector
 local ModeFrame = Instance.new("Frame")
 ModeFrame.Size = UDim2.new(0.9, 0, 0, 40)
 ModeFrame.Position = UDim2.new(0.05, 0, 0, 370)
@@ -427,8 +456,8 @@ SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
 SlowBtn.TextColor3 = Color3.new(1, 1, 1)
 Instance.new("UICorner", SlowBtn)
 
--- SLIDERS SECTION (Starting at 420)
-local function createSlider(name, positionY, min, max, default, callback)
+-- SLIDERS SECTION
+local function createSlider(name, positionY, min, max, default, callback, dependToggle)
     local Container = Instance.new("Frame")
     Container.Size = UDim2.new(0.9, 0, 0, 45)
     Container.Position = UDim2.new(0.05, 0, 0, positionY)
@@ -461,7 +490,27 @@ local function createSlider(name, positionY, min, max, default, callback)
     Instance.new("UICorner", Btn).CornerRadius = UDim.new(1, 0)
 
     local isDragging = false
+    
+    -- Update interactability based on toggle
+    local function updateState()
+        if dependToggle then
+            local active = ProfileSettings.FastMineActive
+            Btn.BackgroundColor3 = active and Color3.fromRGB(120, 120, 120) or Color3.fromRGB(200, 200, 200)
+            Container.BackgroundTransparency = active and 0.2 or 0.6
+            Label.TextColor3 = active and Color3.new(0,0,0) or Color3.new(0.5,0.5,0.5)
+        end
+    end
+    
+    -- Connect to a loop to check toggle state
+    task.spawn(function()
+        while true do
+            updateState()
+            task.wait(0.2)
+        end
+    end)
+
     Btn.InputBegan:Connect(function(input)
+        if dependToggle and not ProfileSettings.FastMineActive then return end
         if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then isDragging = true end
     end)
 
@@ -470,10 +519,13 @@ local function createSlider(name, positionY, min, max, default, callback)
             local relativeX = input.Position.X - Track.AbsolutePosition.X
             local percentage = math.clamp(relativeX / Track.AbsoluteSize.X, 0, 1)
             local value = min + (percentage * (max - min))
-            local snap = math.floor((value * 10) + 0.5) / 10
+            
+            -- SNAP TO WHOLE NUMBERS
+            local snap = math.round(value)
+            snap = math.clamp(snap, min, max)
             
             Btn.Position = UDim2.new((snap - min) / (max - min), -7, 0.5, -7)
-            Label.Text = name .. ": " .. string.format("%.1f", snap) .. "x"
+            Label.Text = name .. ": " .. snap .. "x"
             callback(snap)
         end
     end)
@@ -497,11 +549,12 @@ createSlider("Slow Speed", 470, 0.25, 1, 1, function(v)
     end
 end)
 
+-- MINE BOOST SLIDER (Tied to MineToggle)
 createSlider("Mine Boost", 520, 1, 10, 1, function(v)
     ProfileSettings.MineSpeedMultiplier = v
-end)
+end, true)
 
--- Final Button at 570
+-- Final Button
 createButton("TELEPORT TO SPAWN", 570, function()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
