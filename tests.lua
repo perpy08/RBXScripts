@@ -200,28 +200,7 @@ MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 MainFrame.Active = true
 MainFrame.Parent = ScreenGui
 
--- Modern Dragging System (Replacing deprecated .Draggable)
-local dragging, dragInput, dragStart, startPos
-local function updateInput(input)
-    local delta = input.Position - dragStart
-    MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-end
-UserInputService.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local guiObject = LocalPlayer:WaitForChild("PlayerGui"):GetGuiObjectAtPosition(input.Position.X, input.Position.Y)
-        if guiObject == MainFrame or guiObject:IsDescendantOf(MainFrame) then
-            dragging = true
-            dragStart = input.Position
-            startPos = MainFrame.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false end
-            end)
-        end
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then updateInput(input) end
-end)
+-- Dragging logic moved to end of GUI section to avoid nil references!
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 
 local HeaderLabel = Instance.new("TextLabel")
@@ -233,6 +212,42 @@ HeaderLabel.Font = Enum.Font.SourceSansBold
 HeaderLabel.TextSize = 14
 HeaderLabel.Parent = MainFrame
 Instance.new("UICorner", HeaderLabel).CornerRadius = UDim.new(0, 8)
+
+-- Robust Modern Dragging System (Placed here so HeaderLabel exists!)
+local dragging, dragInput, dragStart, startPos
+
+local function updateInput()
+    local delta = dragInput.Position - dragStart
+    MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local guiObject = LocalPlayer.PlayerGui:GetGuiObjectAtPosition(input.Position.X, input.Position.Y)
+        if guiObject and (guiObject == HeaderLabel or guiObject:IsDescendantOf(HeaderLabel)) then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+            dragInput = input
+            
+            local connection
+            connection = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    connection:Disconnect()
+                end
+            end)
+        end
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        if dragging then
+            updateInput()
+        end
+    end
+end)
 
 local function createToggle(name, positionY, callback)
     local Button = Instance.new("TextButton")
