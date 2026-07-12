@@ -314,7 +314,7 @@ ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 300, 0, 400) 
 MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
-MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+MainFrame.BackgroundColor3 = Color3.fromRGB(200, 230, 200)
 MainFrame.Active = true
 MainFrame.Draggable = true 
 MainFrame.Parent = ScreenGui
@@ -322,9 +322,9 @@ Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 
 local HeaderLabel = Instance.new("TextLabel")
 HeaderLabel.Size = UDim2.new(1, 0, 0, 35)
-HeaderLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+HeaderLabel.BackgroundColor3 = Color3.fromRGB(160, 200, 160)
 HeaderLabel.Text = "Mine A Mountain - Glitch Edition"
-HeaderLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+HeaderLabel.TextColor3 = Color3.fromRGB(40, 80, 40)
 HeaderLabel.Font = Enum.Font.SourceSansBold
 HeaderLabel.TextSize = 14
 HeaderLabel.Parent = MainFrame
@@ -334,7 +334,7 @@ local ScrollFrame = Instance.new("ScrollingFrame")
 ScrollFrame.Size = UDim2.new(1, 0, 1, -35)
 ScrollFrame.Position = UDim2.new(0, 0, 0, 35)
 ScrollFrame.BackgroundTransparency = 1
-ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 600)
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 800)
 ScrollFrame.ScrollBarThickness = 4
 ScrollFrame.Parent = MainFrame
 
@@ -342,9 +342,9 @@ local function createToggle(name, positionY, callback)
     local Button = Instance.new("TextButton")
     Button.Size = UDim2.new(0.9, 0, 0, 35)
     Button.Position = UDim2.new(0.05, 0, 0, positionY)
-    Button.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    Button.BackgroundColor3 = Color3.fromRGB(220, 245, 220)
     Button.Text = name .. ": OFF"
-    Button.TextColor3 = Color3.fromRGB(220, 80, 80)
+    Button.TextColor3 = Color3.fromRGB(100, 140, 100)
     Button.Font = Enum.Font.SourceSans
     Button.TextSize = 14
     Button.Parent = ScrollFrame
@@ -353,8 +353,8 @@ local function createToggle(name, positionY, callback)
     local toggled = false
     Button.MouseButton1Click:Connect(function()
         toggled = not toggled
-        Button.BackgroundColor3 = toggled and Color3.fromRGB(60, 110, 60) or Color3.fromRGB(45, 45, 45)
-        Button.TextColor3 = toggled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(220, 80, 80)
+        Button.BackgroundColor3 = toggled and Color3.fromRGB(140, 200, 140) or Color3.fromRGB(220, 245, 220)
+        Button.TextColor3 = toggled and Color3.fromRGB(40, 100, 40) or Color3.fromRGB(100, 140, 100)
         Button.Text = name .. (toggled and ": ON" or ": OFF")
         callback(toggled)
     end)
@@ -364,9 +364,9 @@ local function createButton(name, positionY, callback)
     local Button = Instance.new("TextButton")
     Button.Size = UDim2.new(0.9, 0, 0, 35)
     Button.Position = UDim2.new(0.05, 0, 0, positionY)
-    Button.BackgroundColor3 = Color3.fromRGB(60, 60, 120)
+    Button.BackgroundColor3 = Color3.fromRGB(170, 210, 170)
     Button.Text = name
-    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextColor3 = Color3.fromRGB(40, 80, 40)
     Button.Parent = ScrollFrame
     Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 4)
     Button.MouseButton1Click:Connect(callback)
@@ -418,7 +418,7 @@ local FastBtn = Instance.new("TextButton", ModeFrame)
 FastBtn.Size = UDim2.new(0.48, 0, 1, 0)
 FastBtn.Position = UDim2.new(0, 0, 0, 0)
 FastBtn.Text = "FAST MODE"
-FastBtn.BackgroundColor3 = Color3.fromRGB(60, 110, 60)
+FastBtn.BackgroundColor3 = Color3.fromRGB(150, 210, 150)
 FastBtn.TextColor3 = Color3.new(1, 1, 1)
 Instance.new("UICorner", FastBtn)
 
@@ -426,7 +426,7 @@ local SlowBtn = Instance.new("TextButton", ModeFrame)
 SlowBtn.Size = UDim2.new(0.48, 0, 1, 0)
 SlowBtn.Position = UDim2.new(0.52, 0, 0, 0)
 SlowBtn.Text = "SLOW MODE"
-SlowBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+SlowBtn.BackgroundColor3 = Color3.fromRGB(220, 240, 220)
 SlowBtn.TextColor3 = Color3.new(1, 1, 1)
 Instance.new("UICorner", SlowBtn)
 
@@ -450,7 +450,7 @@ SpeedSliLabel.Parent = SpeedSliContainer
 local SpeedSliTrack = Instance.new("Frame")
 SpeedSliTrack.Size = UDim2.new(1, 0, 0, 6)
 SpeedSliTrack.Position = UDim2.new(0, 0, 0, 28)
-SpeedSliTrack.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+SpeedSliTrack.BackgroundColor3 = Color3.fromRGB(180, 210, 180)
 SpeedSliTrack.Parent = SpeedSliContainer
 Instance.new("UICorner", SpeedSliTrack).CornerRadius = UDim.new(0, 3)
 
@@ -482,7 +482,7 @@ SlowSliLabel.Parent = SlowSliContainer
 local SlowSliTrack = Instance.new("Frame")
 SlowSliTrack.Size = UDim2.new(1, 0, 0, 6)
 SlowSliTrack.Position = UDim2.new(0, 0, 0, 28)
-SlowSliTrack.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+SlowSliTrack.BackgroundColor3 = Color3.fromRGB(180, 210, 180)
 SlowSliTrack.Parent = SlowSliContainer
 Instance.new("UICorner", SlowSliTrack).CornerRadius = UDim.new(0, 3)
 
@@ -557,8 +557,8 @@ end)
 
 SlowBtn.MouseButton1Click:Connect(function()
     ProfileSettings.SpeedMode = "Slow"
-    SlowBtn.BackgroundColor3 = Color3.fromRGB(60, 110, 60)
-    FastBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    SlowBtn.BackgroundColor3 = Color3.fromRGB(150, 210, 150)
+    FastBtn.BackgroundColor3 = Color3.fromRGB(220, 240, 220)
     SlowSliContainer.BackgroundTransparency = 0.2
     SpeedSliContainer.BackgroundTransparency = 1
 end)
