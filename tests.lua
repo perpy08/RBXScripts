@@ -112,6 +112,30 @@ end)
 local FPS = 3
 local FRAME_DURATION = 1 / FPS
 
+local function createGhostClone(char)
+    if not char then return end
+    char.Archivable = true
+    local clone = char:Clone()
+    char.Archivable = false
+    
+    for _, part in ipairs(clone:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.Anchored = true
+            part.CanCollide = false
+            part.CanTouch = false
+            part.CanQuery = false
+            part.Transparency = 0.6
+            part.Color = Color3.fromRGB(150, 150, 255)
+            TweenService:Create(part, TweenInfo.new(0.3), {Transparency = 1}):Play()
+        elseif part:IsA("Decal") or part:IsA("Texture") then
+            part:Destroy()
+        end
+    end
+    
+    clone.Parent = workspace
+    game:GetService("Debris"):AddItem(clone, 0.3)
+end
+
 local function applyLagEffect(track)
     local lastUpdate = 0
     local connection
@@ -127,6 +151,11 @@ local function applyLagEffect(track)
                 local skip = 0.15 + (math.random() * 0.1)
                 track.TimePosition = track.TimePosition + skip
                 lastUpdate = os.clock()
+                
+                -- Trigger Ghost Clone on the tick!
+                if LocalPlayer.Character then
+                    createGhostClone(LocalPlayer.Character)
+                end
             end
         else
             track:AdjustSpeed(1.0)
