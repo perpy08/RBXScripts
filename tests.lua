@@ -19,8 +19,10 @@ local ProfileSettings = {
     NoRagdollActive = false,
     NoDamageActive = false,
     PlayerESPActive = false,
-    GlitchActive = false, -- Controls the 3 FPS Animation Lag
-    CurrentSpeedMultiplier = 1.0
+    GlitchActive = false, 
+    CurrentSpeedMultiplier = 1.0,
+    AnimSpeedMultiplier = 1.0,
+    SpeedMode = "Fast" -- "Fast" or "Slow"
 }
 
 local maxBonusJumps = 10
@@ -106,7 +108,7 @@ task.spawn(function()
     end
 end)
 
--- THE "REAL" 3FPS GLITCH ENGINE (ANIMATION MANIPULATION)
+-- THE REAL 3FPS GLITCH ENGINE
 local FPS = 3
 local FRAME_DURATION = 1 / FPS
 
@@ -120,7 +122,6 @@ local function applyLagEffect(track)
         end
         
         if ProfileSettings.GlitchActive then
-            -- Freeze animation speed and snap TimePosition to create the "low fps" look
             track:AdjustSpeed(0)
             if os.clock() - lastUpdate >= FRAME_DURATION then
                 local skip = 0.15 + (math.random() * 0.1)
@@ -128,8 +129,7 @@ local function applyLagEffect(track)
                 lastUpdate = os.clock()
             end
         else
-            -- Restore normal playback speed
-            track:AdjustSpeed(ProfileSettings.CurrentSpeedMultiplier)
+            track:AdjustSpeed(ProfileSettings.AnimSpeedMultiplier)
         end
     end)
 end
@@ -140,7 +140,6 @@ local function ManageCharacter(character)
     local rootPart = character:WaitForChild("HumanoidRootPart", 5)
     if not humanoid or not rootPart then return end
     
-    -- Animation Lag Setup
     local animator = humanoid:FindFirstChildOfClass("Animator")
     if animator then
         animator.AnimationPlayed:Connect(applyLagEffect)
@@ -151,9 +150,15 @@ local function ManageCharacter(character)
 
     local speedConnection
     speedConnection = humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-        local expectedSpeed = 16 * ProfileSettings.CurrentSpeedMultiplier
-        if math.abs(humanoid.WalkSpeed - expectedSpeed) > 1 then
-            humanoid.WalkSpeed = expectedSpeed
+        local targetSpeed = 16
+        if ProfileSettings.SpeedMode == "Fast" then
+            targetSpeed = 16 * ProfileSettings.CurrentSpeedMultiplier
+        else
+            targetSpeed = 16 * ProfileSettings.CurrentSpeedMultiplier
+        end
+        
+        if math.abs(humanoid.WalkSpeed - targetSpeed) > 1 then
+            humanoid.WalkSpeed = targetSpeed
         end
     end)
     humanoid.WalkSpeed = 16 * ProfileSettings.CurrentSpeedMultiplier
@@ -164,7 +169,7 @@ local function ManageCharacter(character)
             humanoid.PlatformStand = false
         end
     end)
-    
+
     local stateConnection
     stateConnection = humanoid.StateChanged:Connect(function(_, newState)
         if ProfileSettings.NoRagdollActive and (newState == Enum.HumanoidStateType.Physics or newState == Enum.HumanoidStateType.Ragdoll or newState == Enum.HumanoidStateType.FallingDown) then
@@ -174,8 +179,7 @@ local function ManageCharacter(character)
             jumpCount = 0
         end
     end)
-    
-    -- Heartbeat loop for No Damage
+
     local damageConn = RunService.Heartbeat:Connect(function()
         if ProfileSettings.NoDamageActive then
             if humanoid.Health > 0 and humanoid.Health < humanoid.MaxHealth then
@@ -230,8 +234,8 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 240, 0, 520) 
-MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
+MainFrame.Size = UDim2.new(0, 240, 0, 650) 
+MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 MainFrame.Active = true
 MainFrame.Draggable = true 
@@ -241,7 +245,7 @@ Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 local HeaderLabel = Instance.new("TextLabel")
 HeaderLabel.Size = UDim2.new(1, 0, 0, 35)
 HeaderLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-HeaderLabel.Text = "Mine A Mountain"
+HeaderLabel.Text = "Mine A Mountain - Glitch Edition"
 HeaderLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 HeaderLabel.Font = Enum.Font.SourceSansBold
 HeaderLabel.TextSize = 14
@@ -290,18 +294,181 @@ createToggle("No Damage", 255, function(s) ProfileSettings.NoDamageActive = s en
 createToggle("Player ESP", 305, function(s) ProfileSettings.PlayerESPActive = s end)
 createToggle("Glitch Lag FX", 355, function(s) 
     ProfileSettings.GlitchActive = s 
-    -- Force existing animations to update speed immediately
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
         local animator = LocalPlayer.Character.Humanoid:FindFirstChildOfClass("Animator")
         if animator then
             for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                track:AdjustSpeed(s and 0 or ProfileSettings.CurrentSpeedMultiplier)
+                track:AdjustSpeed(s and 0 or ProfileSettings.AnimSpeedMultiplier)
             end
         end
     end
 end)
 
-createButton("TELEPORT TO SPAWN", 405, function()
+-- Speed Mode Selector
+local ModeFrame = Instance.new("Frame")
+ModeFrame.Size = UDim2.new(0.9, 0, 0, 40)
+ModeFrame.Position = UDim2.new(0.05, 0, 0, 405)
+ModeFrame.BackgroundTransparency = 1
+ModeFrame.Parent = MainFrame
+
+local FastBtn = Instance.new("TextButton", ModeFrame)
+FastBtn.Size = UDim2.new(0.48, 0, 1, 0)
+FastBtn.Position = UDim2.new(0, 0, 0, 0)
+FastBtn.Text = "FAST MODE"
+FastBtn.BackgroundColor3 = Color3.fromRGB(60, 110, 60)
+FastBtn.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", FastBtn)
+
+local SlowBtn = Instance.new("TextButton", ModeFrame)
+SlowBtn.Size = UDim2.new(0.48, 0, 1, 0)
+SlowBtn.Position = UDim2.new(0.52, 0, 0, 0)
+SlowBtn.Text = "SLOW MODE"
+SlowBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+SlowBtn.TextColor3 = Color3.new(1, 1, 1)
+Instance.new("UICorner", SlowBtn)
+
+-- Slider 1: Speed Multiplier (Fast)
+local SpeedSliContainer = Instance.new("Frame")
+SpeedSliContainer.Size = UDim2.new(0.9, 0, 0, 45)
+SpeedSliContainer.Position = UDim2.new(0.05, 0, 0, 455)
+SpeedSliContainer.BackgroundTransparency = 1
+SpeedSliContainer.Parent = MainFrame
+
+local SpeedSliLabel = Instance.new("TextLabel")
+SpeedSliLabel.Size = UDim2.new(1, 0, 0, 20)
+SpeedSliLabel.BackgroundTransparency = 1
+SpeedSliLabel.Text = "Walk Speed: 1.0x"
+SpeedSliLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+SpeedSliLabel.Font = Enum.Font.SourceSans
+SpeedSliLabel.TextSize = 13
+SpeedSliLabel.TextXAlignment = Enum.TextXAlignment.Left
+SpeedSliLabel.Parent = SpeedSliContainer
+
+local SpeedSliTrack = Instance.new("Frame")
+SpeedSliTrack.Size = UDim2.new(1, 0, 0, 6)
+SpeedSliTrack.Position = UDim2.new(0, 0, 0, 28)
+SpeedSliTrack.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+SpeedSliTrack.Parent = SpeedSliContainer
+Instance.new("UICorner", SpeedSliTrack).CornerRadius = UDim.new(0, 3)
+
+local SpeedSliBtn = Instance.new("TextButton")
+SpeedSliBtn.Size = UDim2.new(0, 14, 0, 14)
+SpeedSliBtn.Position = UDim2.new(0, 0, 0.5, -7)
+SpeedSliBtn.BackgroundColor3 = Color3.fromRGB(180, 180, 180)
+SpeedSliBtn.Text = ""
+SpeedSliBtn.Parent = SpeedSliTrack
+Instance.new("UICorner", SpeedSliBtn).CornerRadius = UDim.new(1, 0)
+
+-- Slider 2: Animation Speed (Slower/Normal)
+local AnimSliContainer = Instance.new("Frame")
+AnimSliContainer.Size = UDim2.new(0.9, 0, 0, 45)
+AnimSliContainer.Position = UDim2.new(0.05, 0, 0, 505)
+AnimSliContainer.BackgroundTransparency = 1
+AnimSliContainer.Parent = MainFrame
+
+local AnimSliLabel = Instance.new("TextLabel")
+AnimSliLabel.Size = UDim2.new(1, 0, 0, 20)
+AnimSliLabel.BackgroundTransparency = 1
+AnimSliLabel.Text = "Anim Speed: 1.0x"
+AnimSliLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+AnimSliLabel.Font = Enum.Font.SourceSans
+AnimSliLabel.TextSize = 13
+AnimSliLabel.TextXAlignment = Enum.TextXAlignment.Left
+AnimSliLabel.Parent = AnimSliContainer
+
+local AnimSliTrack = Instance.new("Frame")
+AnimSliTrack.Size = UDim2.new(1, 0, 0, 6)
+AnimSliTrack.Position = UDim2.new(0, 0, 0, 28)
+AnimSliTrack.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+AnimSliTrack.Parent = AnimSliContainer
+Instance.new("UICorner", AnimSliTrack).CornerRadius = UDim.new(0, 3)
+
+local AnimSliBtn = Instance.new("TextButton")
+AnimSliBtn.Size = UDim2.new(0, 14, 0, 14)
+AnimSliBtn.Position = UDim2.new(1, -7, 0.5, -7)
+AnimSliBtn.BackgroundColor3 = Color3.fromRGB(180, 180, 180)
+AnimSliBtn.Text = ""
+AnimSliBtn.Parent = AnimSliTrack
+Instance.new("UICorner", AnimSliBtn).CornerRadius = UDim.new(1, 0)
+
+local isSliDragging = false
+local isAnimSliDragging = false
+
+local function updateSpeedSlider(input)
+    local trackWidth = SpeedSliTrack.AbsoluteSize.X
+    local relativeX = input.Position.X - SpeedSliTrack.AbsolutePosition.X
+    local percentage = math.clamp(relativeX / trackWidth, 0, 1)
+    local rawValue = 1.0 + (percentage * 4.0)
+    local snapValue = math.floor((rawValue * 2) + 0.5) / 2
+    local finalPercentage = (snapValue - 1.0) / 4.0
+    
+    SpeedSliBtn.Position = UDim2.new(finalPercentage, -7, 0.5, -7)
+    SpeedSliLabel.Text = "Walk Speed: " .. string.format("%.1f", snapValue) .. "x"
+    ProfileSettings.CurrentSpeedMultiplier = snapValue
+    
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChildOfClass("Humanoid") then
+        char:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * snapValue
+    end
+end
+
+local function updateAnimSlider(input)
+    local trackWidth = AnimSliTrack.AbsoluteSize.X
+    local relativeX = input.Position.X - AnimSliTrack.AbsolutePosition.X
+    local percentage = math.clamp(relativeX / trackWidth, 0, 1)
+    -- Left (0) is 0.25, Right (1) is 1.0
+    local rawValue = 0.25 + (percentage * 0.75)
+    local snapValue = math.floor((rawValue * 20) + 0.5) / 20
+    local finalPercentage = (snapValue - 0.25) / 0.75
+    
+    AnimSliBtn.Position = UDim2.new(finalPercentage, -7, 0.5, -7)
+    AnimSliLabel.Text = "Anim Speed: " .. string.format("%.2f", snapValue) .. "x"
+    ProfileSettings.AnimSpeedMultiplier = snapValue
+    
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChildOfClass("Humanoid") then
+        local animator = char.Humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                if not ProfileSettings.GlitchActive then
+                    track:AdjustSpeed(snapValue)
+                end
+            end
+        end
+    end
+end
+
+SpeedSliBtn.InputBegan:Connect(function(input)
+    if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and ProfileSettings.SpeedMode == "Fast" then isSliDragging = true end
+end)
+AnimSliBtn.InputBegan:Connect(function(input)
+    if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and ProfileSettings.SpeedMode == "Slow" then isAnimSliDragging = true end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if isSliDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then updateSpeedSlider(input) end
+    if isAnimSliDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then updateAnimSlider(input) end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isSliDragging = false isAnimSliDragging = false end
+end)
+
+FastBtn.MouseButton1Click:Connect(function()
+    ProfileSettings.SpeedMode = "Fast"
+    FastBtn.BackgroundColor3 = Color3.fromRGB(60, 110, 60)
+    SlowBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    SpeedSliContainer.BackgroundTransparency = 0.2 -- Visual highlight
+    AnimSliContainer.BackgroundTransparency = 1
+end)
+
+SlowBtn.MouseButton1Click:Connect(function()
+    ProfileSettings.SpeedMode = "Slow"
+    SlowBtn.BackgroundColor3 = Color3.fromRGB(60, 110, 60)
+    FastBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    AnimSliContainer.BackgroundTransparency = 0.2
+    SpeedSliContainer.BackgroundTransparency = 1
+end)
+
+createButton("TELEPORT TO SPAWN", 560, function()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
         local spawn = workspace:FindFirstChild("SpawnLocation", true)
@@ -309,85 +476,6 @@ createButton("TELEPORT TO SPAWN", 405, function()
             TweenService:Create(char.HumanoidRootPart, TweenInfo.new(0.5), {CFrame = spawn.CFrame + Vector3.new(0, 3, 0)}):Play()
         end
     end
-end)
-
--- ---------------------------------------------------------------------
---  4. SLIDER ELEMENT
--- ---------------------------------------------------------------------
-
-local SliderContainer = Instance.new("Frame")
-SliderContainer.Size = UDim2.new(0.9, 0, 0, 45)
-SliderContainer.Position = UDim2.new(0.05, 0, 0, 450)
-SliderContainer.BackgroundTransparency = 1
-SliderContainer.Parent = MainFrame
-
-local SliderLabel = Instance.new("TextLabel")
-SliderLabel.Size = UDim2.new(1, 0, 0, 20)
-SliderLabel.BackgroundTransparency = 1
-SliderLabel.Text = "Speed Multiplier: 1.0x"
-SliderLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-SliderLabel.Font = Enum.Font.SourceSans
-SliderLabel.TextSize = 13
-SliderLabel.TextXAlignment = Enum.TextXAlignment.Left
-SliderLabel.Parent = SliderContainer
-
-local SliderTrack = Instance.new("Frame")
-SliderTrack.Size = UDim2.new(1, 0, 0, 6)
-SliderTrack.Position = UDim2.new(0, 0, 0, 28)
-SliderTrack.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-SliderTrack.Parent = SliderContainer
-Instance.new("UICorner", SliderTrack).CornerRadius = UDim.new(0, 3)
-
-local SliderButton = Instance.new("TextButton")
-SliderButton.Size = UDim2.new(0, 14, 0, 14)
-SliderButton.Position = UDim2.new(0, 0, 0.5, -7)
-SliderButton.BackgroundColor3 = Color3.fromRGB(180, 180, 180)
-SliderButton.Text = ""
-SliderButton.Parent = SliderTrack
-Instance.new("UICorner", SliderButton).CornerRadius = UDim.new(1, 0)
-
-local isDragging = false
-
-local function updateSlider(input)
-    local trackWidth = SliderTrack.AbsoluteSize.X
-    local mouseX = input.Position.X
-    local relativeX = mouseX - SliderTrack.AbsolutePosition.X
-    local percentage = math.clamp(relativeX / trackWidth, 0, 1)
-    local rawValue = 1.0 + (percentage * 4.0)
-    local snapValue = math.floor((rawValue * 2) + 0.5) / 2
-    local finalPercentage = (snapValue - 1.0) / 4.0
-    
-    SliderButton.Position = UDim2.new(finalPercentage, -7, 0.5, -7)
-    SliderLabel.Text = "Speed Multiplier: " .. string.format("%.1f", snapValue) .. "x"
-    ProfileSettings.CurrentSpeedMultiplier = snapValue
-    
-    pcall(function()
-        local character = LocalPlayer.Character
-        if character and character:FindFirstChildOfClass("Humanoid") then
-            local hum = character:FindFirstChildOfClass("Humanoid")
-            hum.WalkSpeed = 16 * snapValue
-            
-            -- Update animation speed for non-glitched state
-            local animator = hum:FindFirstChildOfClass("Animator")
-            if animator then
-                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                    if not ProfileSettings.GlitchActive then
-                        track:AdjustSpeed(snapValue)
-                    end
-                end
-            end
-        end
-    end)
-end
-
-SliderButton.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isDragging = true end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then updateSlider(input) end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isDragging = false end
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
