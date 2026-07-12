@@ -282,15 +282,14 @@ end)
 -- ---------------------------------------------------------------------
 --  SUPREME ANTI-RAGDOLL & GLOW KILLER
 -- ---------------------------------------------------------------------
-RunService.Heartbeat:Connect(function()
-    -- RELENTLESS RAGDOLL EXTERMINATOR (Fixing the torso flop)
+RunService.Stepped:Connect(function()
+    -- RELENTLESS RAGDOLL EXTERMINATOR (Nuclear Version)
     if ProfileSettings.NoRagdollActive then
         local char = LocalPlayer.Character
         if char then
             local humanoid = char:FindFirstChildOfClass("Humanoid")
             local rootPart = char:FindFirstChild("HumanoidRootPart")
             
-            -- Force stand and state spam to prevent flopping
             if humanoid then
                 humanoid.PlatformStand = false
                 if humanoid:GetState() == Enum.HumanoidStateType.Ragdoll or humanoid:GetState() == Enum.HumanoidStateType.Physics then
@@ -298,9 +297,17 @@ RunService.Heartbeat:Connect(function()
                 end
             end
             
-            if rootPart and rootPart.Velocity.Magnitude > 50 and humanoid and humanoid:GetState() ~= Enum.HumanoidStateType.Freefall then
-                -- Dampen erratic physics movement if ragdolled
-                rootPart.Velocity = rootPart.Velocity * 0.9
+            -- Rotation Snap: Force RootPart to remain vertical
+            if rootPart then
+                local currentRot = rootPart.CFrame
+                local uprightRot = CFrame.new(currentRot.Position) * CFrame.Angles(0, math.atan2(currentRot.LookVector.X, currentRot.LookVector.Z), 0)
+                if (currentRot.LookVector - uprightRot.LookVector).Magnitude > 0.1 then
+                    rootPart.CFrame = uprightRot
+                end
+                
+                if rootPart.Velocity.Magnitude > 50 and humanoid and humanoid:GetState() ~= Enum.HumanoidStateType.Freefall then
+                    rootPart.Velocity = rootPart.Velocity * 0.9
+                end
             end
 
             for _, obj in ipairs(char:GetDescendants()) do
@@ -311,8 +318,9 @@ RunService.Heartbeat:Connect(function()
             end
         end
     end
+end)
 
-    -- GLOW KILLER CORE
+RunService.Heartbeat:Connect(function()
     if ProfileSettings.KillGlowActive then
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
@@ -439,11 +447,11 @@ SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
 SlowBtn.TextColor3 = Color3.new(1, 1, 1)
 Instance.new("UICorner", SlowBtn)
 
-local function createSlider(name, positionY, min, max, default, callback)
+local function createSlider(name, positionY, min, max, default, inverted, callback)
     local Container = Instance.new("Frame")
     Container.Size = UDim2.new(0.9, 0, 0, 45)
     Container.Position = UDim2.new(0.05, 0, 0, positionY)
-    Container.BackgroundTransparency = 0.2
+    Container.BackgroundTransparency = 1
     Container.Parent = ScrollFrame
 
     local Label = Instance.new("TextLabel")
@@ -481,34 +489,43 @@ local function createSlider(name, positionY, min, max, default, callback)
         if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local relativeX = input.Position.X - Track.AbsolutePosition.X
             local percentage = math.clamp(relativeX / Track.AbsoluteSize.X, 0, 1)
-            local value = min + (percentage * (max - min))
             
-            Btn.Position = UDim2.new((value - min) / (max - min), -7, 0.5, -7)
+            local value = min + (percentage * (max - min))
+            if inverted then
+                value = max - (percentage * (max - min))
+            end
+            
+            -- Snap button to exact percentage
+            local btnPos = inverted and (1 - percentage) or percentage
+            Btn.Position = UDim2.new(btnPos, -7, 0.5, -7)
+            
             Label.Text = name .. ": " .. string.format("%.2f", value) .. "x"
-            callback(value)
+            callback(value, Container)
         end
     end)
 
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isDragging = false end
     end)
+
+    return Container
 end
 
-createSlider("Walk Speed", 330, 1, 5, 1, function(v)
+local walkSpeedContainer = createSlider("Walk Speed", 380, 1, 5, 1, false, function(v, container)
     ProfileSettings.CurrentSpeedMultiplier = v
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * v
     end
 end)
 
-createSlider("Slow Speed", 380, 1, 0.25, 1, function(v)
+local slowSpeedContainer = createSlider("Slow Speed", 430, 0.25, 1, 1, true, function(v, container)
     ProfileSettings.SlowSpeedMultiplier = v
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * v
     end
 end)
 
-createButton("TELEPORT TO SPAWN", 430, function()
+createButton("TELEPORT TO SPAWN", 480, function()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
         local spawn = workspace:FindFirstChild("SpawnLocation", true)
@@ -518,18 +535,47 @@ createButton("TELEPORT TO SPAWN", 430, function()
     end
 end)
 
+local function updateSliderInteractions()
+    if ProfileSettings.SpeedMode == "Fast" then
+        slowSpeedContainer.BackgroundTransparency = 0.6
+        slowSpeedContainer.Children.TextLabel.TextTransparency = 0.5
+        -- Note: To fully disable a custom slider, we simply check SpeedMode in the slider callback
+    else
+        walkSpeedContainer.BackgroundTransparency = 0.6
+        walkSpeedContainer.Children.TextLabel.TextTransparency = 0.5
+    end
+    
+    -- Reset all first
+    slowSpeedContainer.BackgroundTransparency = 1
+    slowSpeedContainer.Children.TextLabel.TextTransparency = 0
+    walkSpeedContainer.BackgroundTransparency = 1
+    walkSpeedContainer.Children.TextLabel.TextTransparency = 0
+    
+    if ProfileSettings.SpeedMode == "Fast" then
+        slowSpeedContainer.BackgroundTransparency = 0.6
+        slowSpeedContainer.Children.TextLabel.TextTransparency = 0.5
+    else
+        walkSpeedContainer.BackgroundTransparency = 0.6
+        walkSpeedContainer.Children.TextLabel.TextTransparency = 0.5
+    end
+end
+
 FastBtn.MouseButton1Click:Connect(function()
     ProfileSettings.SpeedMode = "Fast"
     FastBtn.BackgroundColor3 = Color3.fromRGB(140, 200, 140)
     SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
+    updateSliderInteractions()
 end)
 
 SlowBtn.MouseButton1Click:Connect(function()
     ProfileSettings.SpeedMode = "Slow"
     SlowBtn.BackgroundColor3 = Color3.fromRGB(140, 200, 140)
     FastBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
+    updateSliderInteractions()
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
     if not gameProcessedEvent and input.KeyCode == Enum.KeyCode.Insert then MainFrame.Visible = not MainFrame.Visible end
 end)
+
+updateSliderInteractions()
