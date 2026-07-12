@@ -494,21 +494,21 @@ local function createSlider(name, positionY, min, max, default, callback)
     end)
 end
 
-createSlider("Walk Speed", 380, 1, 5, 1, function(v)
+createSlider("Walk Speed", 330, 1, 5, 1, function(v)
     ProfileSettings.CurrentSpeedMultiplier = v
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * v
     end
 end)
 
-createSlider("Slow Speed", 430, 0.25, 1, 1, function(v)
+createSlider("Slow Speed", 380, 1, 0.25, 1, function(v)
     ProfileSettings.SlowSpeedMultiplier = v
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * v
     end
 end)
 
-createButton("TELEPORT TO SPAWN", 480, function()
+createButton("TELEPORT TO SPAWN", 430, function()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
         local spawn = workspace:FindFirstChild("SpawnLocation", true)
