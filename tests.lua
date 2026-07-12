@@ -108,11 +108,10 @@ task.spawn(function()
     end
 end)
 
--- THE REAL 3FPS GLITCH ENGINE
+-- VISUAL-ONLY GLITCH ENGINE (NO MOVEMENT LOCKING)
 local FPS = 3
 local FRAME_DURATION = 1 / FPS
 local lastGlobalTick = 0
-local snappedCFrame = nil
 
 local function createGhostClone(char)
     if not char then return end
@@ -138,7 +137,7 @@ local function createGhostClone(char)
     game:GetService("Debris"):AddItem(clone, 0.3)
 end
 
--- Global Heartbeat for Visual Ghosting (No more movement locking!)
+-- This loop ONLY creates visuals. It NEVER touches the player's CFrame or Velocity.
 RunService.Heartbeat:Connect(function()
     if not ProfileSettings.GlitchActive then 
         return 
