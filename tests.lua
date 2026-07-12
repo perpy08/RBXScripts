@@ -1,6 +1,6 @@
 -- =====================================================================
 --  MINE A MOUNTAIN: THE ULTIMATE UNIVERSAL PANEL (AUTOMATION + GLITCH FX)
---  Combined version: Autobuy + Extreme Lag Effects
+--  Combined version: Autobuy + Extreme Lag Effects (REFINED)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -20,7 +20,7 @@ local ProfileSettings = {
     NoRagdollActive = false,
     NoDamageActive = false,
     PlayerESPActive = false,
-    LagFXActive = false, -- NEW: Glitch/Lag FX Toggle
+    LagFXActive = false, -- Glitch/Lag FX Toggle
     CurrentSpeedMultiplier = 1.0
 }
 
@@ -28,8 +28,8 @@ local maxBonusJumps = 10
 local jumpCount = 0
 
 -- Glitch Internals
-local lastFrameTime = 0
-local glitchTick = 0
+local lastGlitchTime = 0
+local glitchInterval = 0.1 -- The "stutter" speed
 
 -- ---------------------------------------------------------------------
 --  1. ESP LOGIC
@@ -114,8 +114,8 @@ task.spawn(function()
     end
 end)
 
--- UNIFIED HEARTBEAT LOOP (Heals + Glitch FX)
-RunService.Heartbeat:Connect(function(dt)
+-- UNIFIED HEARTBEAT LOOP (Heals + TRUE Glitch FX)
+RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -128,18 +128,21 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Glitch / Lag FX Logic (Integrated from glitch.lua)
+    -- TRUE Glitch / Lag FX Logic (Synced to raw source timing)
     if ProfileSettings.LagFXActive and root and hum then
-        glitchTick = glitchTick + dt
-        if glitchTick >= 0.1 then -- Frame skip simulation
-            glitchTick = 0
-            local randomOffset = Vector3.new(
-                math.random(-2, 2), 
-                0, 
-                math.random(-2, 2)
-            ) * ProfileSettings.CurrentSpeedMultiplier
+        local currentTime = tick()
+        if currentTime - lastGlitchTime >= glitchInterval then
+            lastGlitchTime = currentTime
             
-            -- Jitter the RootPart velocity for that "stutter" look
+            -- High-intensity jitter based on Speed Multiplier
+            local intensity = 2 * ProfileSettings.CurrentSpeedMultiplier
+            local randomOffset = Vector3.new(
+                math.random(-intensity, intensity), 
+                0, 
+                math.random(-intensity, intensity)
+            )
+            
+            -- Apply aggressive velocity snap
             root.AssemblyLinearVelocity = root.AssemblyLinearVelocity + randomOffset
         end
     end
