@@ -1,5 +1,6 @@
 -- =====================================================================
---  MINE A MOUNTAIN: UNIVERSAL SAFE AUTOMATION PANEL
+--  MINE A MOUNTAIN: THE ULTIMATE UNIVERSAL PANEL (AUTOMATION + GLITCH FX)
+--  Combined version: Autobuy + Extreme Lag Effects
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -19,11 +20,16 @@ local ProfileSettings = {
     NoRagdollActive = false,
     NoDamageActive = false,
     PlayerESPActive = false,
+    LagFXActive = false, -- NEW: Glitch/Lag FX Toggle
     CurrentSpeedMultiplier = 1.0
 }
 
 local maxBonusJumps = 10
 local jumpCount = 0
+
+-- Glitch Internals
+local lastFrameTime = 0
+local glitchTick = 0
 
 -- ---------------------------------------------------------------------
 --  1. ESP LOGIC
@@ -98,7 +104,7 @@ task.spawn(function()
                 if not ProfileSettings.AutoBuyActive then break end
                 if BUY_BOMB_REMOTE then
                     pcall(function()
-                        BUY_BOMB_REMOTE:FireServer(bombName) -- If it's a RemoteFunction, be wary of yielding the thread!
+                        BUY_BOMB_REMOTE:FireServer(bombName)
                     end)
                 end
                 task.wait(0.4)
@@ -108,12 +114,33 @@ task.spawn(function()
     end
 end)
 
-RunService.Heartbeat:Connect(function()
-    if ProfileSettings.NoDamageActive then
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 and hum.Health < hum.MaxHealth then
+-- UNIFIED HEARTBEAT LOOP (Heals + Glitch FX)
+RunService.Heartbeat:Connect(function(dt)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local root = char:FindFirstChild("HumanoidRootPart")
+
+    -- No Damage Logic
+    if ProfileSettings.NoDamageActive and hum then
+        if hum.Health > 0 and hum.Health < hum.MaxHealth then
             hum.Health = hum.MaxHealth
+        end
+    end
+
+    -- Glitch / Lag FX Logic (Integrated from glitch.lua)
+    if ProfileSettings.LagFXActive and root and hum then
+        glitchTick = glitchTick + dt
+        if glitchTick >= 0.1 then -- Frame skip simulation
+            glitchTick = 0
+            local randomOffset = Vector3.new(
+                math.random(-2, 2), 
+                0, 
+                math.random(-2, 2)
+            ) * ProfileSettings.CurrentSpeedMultiplier
+            
+            -- Jitter the RootPart velocity for that "stutter" look
+            root.AssemblyLinearVelocity = root.AssemblyLinearVelocity + randomOffset
         end
     end
 end)
@@ -194,19 +221,18 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 240, 0, 485)
+MainFrame.Size = UDim2.new(0, 240, 0, 530)
 MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 MainFrame.Active = true
 MainFrame.Parent = ScreenGui
 
--- Dragging logic moved to end of GUI section to avoid nil references!
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 
 local HeaderLabel = Instance.new("TextButton")
 HeaderLabel.Size = UDim2.new(1, 0, 0, 35)
 HeaderLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-HeaderLabel.Text = "Mine A Mountain"
+HeaderLabel.Text = "Mine A Mountain + Glitch"
 HeaderLabel.AutoButtonColor = false
 HeaderLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 HeaderLabel.Font = Enum.Font.SourceSansBold
@@ -214,9 +240,8 @@ HeaderLabel.TextSize = 14
 HeaderLabel.Parent = MainFrame
 Instance.new("UICorner", HeaderLabel).CornerRadius = UDim.new(0, 8)
 
--- Robust Modern Dragging System (Placed here so HeaderLabel exists!)
+-- Dragging System
 local dragging, dragInput, dragStart, startPos
-
 local function updateInput()
     local delta = dragInput.Position - dragStart
     MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
@@ -226,7 +251,6 @@ HeaderLabel.MouseButton1Down:Connect(function()
     dragging = true
     dragStart = UserInputService:GetMouseLocation()
     startPos = MainFrame.Position
-    
     local connection
     connection = UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -241,14 +265,6 @@ UserInputService.InputChanged:Connect(function(input)
         local mousePos = UserInputService:GetMouseLocation()
         local delta = mousePos - dragStart
         MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-        if dragging then
-            updateInput()
-        end
     end
 end)
 
@@ -295,8 +311,9 @@ createToggle("Player ESP", 305, function(s)
     ProfileSettings.PlayerESPActive = s 
     updateESPVisibility() 
 end)
+createToggle("Lag FX (Glitch)", 355, function(s) ProfileSettings.LagFXActive = s end)
 
-createButton("TELEPORT TO SPAWN", 355, function()
+createButton("TELEPORT TO SPAWN", 405, function()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
         local spawn = workspace:FindFirstChild("SpawnLocation") or workspace:FindFirstChild("Spawn") or workspace:FindFirstChild("SpawnPart", true)
@@ -312,7 +329,7 @@ end)
 
 local SliderContainer = Instance.new("Frame")
 SliderContainer.Size = UDim2.new(0.9, 0, 0, 45)
-SliderContainer.Position = UDim2.new(0.05, 0, 0, 410)
+SliderContainer.Position = UDim2.new(0.05, 0, 0, 460)
 SliderContainer.BackgroundTransparency = 1
 SliderContainer.Parent = MainFrame
 
