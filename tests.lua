@@ -19,7 +19,7 @@ local ProfileSettings = {
     NoRagdollActive = false,
     NoDamageActive = false,
     PlayerESPActive = false,
-    GlitchActive = false, -- Controls the "3 FPS" walking look
+    GlitchActive = false, -- Controls the 3 FPS Animation Lag
     CurrentSpeedMultiplier = 1.0
 }
 
@@ -106,51 +106,49 @@ task.spawn(function()
     end
 end)
 
--- 3FPS GLITCH ENGINE
--- This forces the character to snap positions, creating that "low frame rate" walking effect
-local lastUpdate = 0
-local frameTime = 1/3 -- Target 3 FPS for the visual "snap"
+-- THE "REAL" 3FPS GLITCH ENGINE (ANIMATION MANIPULATION)
+local FPS = 3
+local FRAME_DURATION = 1 / FPS
 
-RunService.Heartbeat:Connect(function()
-    if ProfileSettings.GlitchActive then
-        local now = tick()
-        if now - lastUpdate >= frameTime then
-            lastUpdate = now
-            local char = LocalPlayer.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            if root then
-                -- The "Lag" Snap: We apply a tiny random offset and force the CFrame to update 
-                -- infrequently, which confuses the server's interpolation and looks like low FPS.
-                local randomOffset = Vector3.new(math.random(-5,5)/10, 0, math.random(-5,5)/10)
-                root.CFrame = root.CFrame * CFrame.new(randomOffset)
-                
-                -- Velocity jitter to further disrupt the movement smoothness
-                root.AssemblyLinearVelocity = Vector3.new(math.random(-15,15), 0, math.random(-15,15))
+local function applyLagEffect(track)
+    local lastUpdate = 0
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        if not track or not track.IsPlaying then 
+            connection:Disconnect() 
+            return 
+        end
+        
+        if ProfileSettings.GlitchActive then
+            -- Freeze animation speed and snap TimePosition to create the "low fps" look
+            track:AdjustSpeed(0)
+            if os.clock() - lastUpdate >= FRAME_DURATION then
+                local skip = 0.15 + (math.random() * 0.1)
+                track.TimePosition = track.TimePosition + skip
+                lastUpdate = os.clock()
             end
+        else
+            -- Restore normal playback speed
+            track:AdjustSpeed(ProfileSettings.CurrentSpeedMultiplier)
         end
-    end
-    
-    -- No Damage Logic
-    if ProfileSettings.NoDamageActive then
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 and hum.Health < hum.MaxHealth then
-            hum.Health = hum.MaxHealth
-        end
-    end
-end)
+    end)
+end
 
-ProximityPromptService.PromptShown:Connect(function(prompt)
-    if ProfileSettings.InstantInteractions then
-        prompt.HoldDuration = 0
-    end
-end)
-
+-- Hook into Humanoid for Animations and Speed
 local function ManageCharacter(character)
     local humanoid = character:WaitForChild("Humanoid", 5)
     local rootPart = character:WaitForChild("HumanoidRootPart", 5)
     if not humanoid or not rootPart then return end
     
+    -- Animation Lag Setup
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if animator then
+        animator.AnimationPlayed:Connect(applyLagEffect)
+        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+            applyLagEffect(track)
+        end
+    end
+
     local speedConnection
     speedConnection = humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
         local expectedSpeed = 16 * ProfileSettings.CurrentSpeedMultiplier
@@ -177,15 +175,31 @@ local function ManageCharacter(character)
         end
     end)
     
+    -- Heartbeat loop for No Damage
+    local damageConn = RunService.Heartbeat:Connect(function()
+        if ProfileSettings.NoDamageActive then
+            if humanoid.Health > 0 and humanoid.Health < humanoid.MaxHealth then
+                humanoid.Health = humanoid.MaxHealth
+            end
+        end
+    end)
+
     humanoid.Died:Connect(function()
         if speedConnection then speedConnection:Disconnect() end
         if platformConnection then platformConnection:Disconnect() end
         if stateConnection then stateConnection:Disconnect() end
+        damageConn:Disconnect()
     end)
 end
 
 if LocalPlayer and LocalPlayer.Character then ManageCharacter(LocalPlayer.Character) end
 if LocalPlayer then LocalPlayer.CharacterAdded:Connect(ManageCharacter) end
+
+ProximityPromptService.PromptShown:Connect(function(prompt)
+    if ProfileSettings.InstantInteractions then
+        prompt.HoldDuration = 0
+    end
+end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
     if gameProcessedEvent then return end
@@ -274,7 +288,18 @@ createToggle("Infinite Multi-Jump", 155, function(s) ProfileSettings.MultiJumpAc
 createToggle("No Ragdoll", 205, function(s) ProfileSettings.NoRagdollActive = s end)
 createToggle("No Damage", 255, function(s) ProfileSettings.NoDamageActive = s end)
 createToggle("Player ESP", 305, function(s) ProfileSettings.PlayerESPActive = s end)
-createToggle("Glitch Lag FX", 355, function(s) ProfileSettings.GlitchActive = s end) 
+createToggle("Glitch Lag FX", 355, function(s) 
+    ProfileSettings.GlitchActive = s 
+    -- Force existing animations to update speed immediately
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        local animator = LocalPlayer.Character.Humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                track:AdjustSpeed(s and 0 or ProfileSettings.CurrentSpeedMultiplier)
+            end
+        end
+    end
+end)
 
 createButton("TELEPORT TO SPAWN", 405, function()
     local char = LocalPlayer.Character
@@ -339,7 +364,18 @@ local function updateSlider(input)
     pcall(function()
         local character = LocalPlayer.Character
         if character and character:FindFirstChildOfClass("Humanoid") then
-            character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * snapValue
+            local hum = character:FindFirstChildOfClass("Humanoid")
+            hum.WalkSpeed = 16 * snapValue
+            
+            -- Update animation speed for non-glitched state
+            local animator = hum:FindFirstChildOfClass("Animator")
+            if animator then
+                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                    if not ProfileSettings.GlitchActive then
+                        track:AdjustSpeed(snapValue)
+                    end
+                end
+            end
         end
     end)
 end
