@@ -320,16 +320,24 @@ RunService.Stepped:Connect(function()
     end
 end)
 
+-- OPTIMIZED KILL GLOW ENGINE
+local lastGlowSweep = 0
 RunService.Heartbeat:Connect(function()
-    if ProfileSettings.KillGlowActive then
+    if not ProfileSettings.KillGlowActive then return end
+    
+    -- Lighting effects are cheap, do them every frame
+    for _, effect in ipairs(Lighting:GetChildren()) do
+        if (effect:IsA("BloomEffect") or effect:IsA("BlurEffect") or effect:IsA("SunRaysEffect")) and effect.Enabled then
+            effect.Enabled = false
+        end
+    end
+
+    -- Workspace scanning is expensive! Sweep every 0.5 seconds instead of every frame
+    if os.clock() - lastGlowSweep >= 0.5 then
+        lastGlowSweep = os.clock()
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
                 part.Material = Enum.Material.SmoothPlastic
-            end
-        end
-        for _, effect in ipairs(Lighting:GetChildren()) do
-            if (effect:IsA("BloomEffect") or effect:IsA("BlurEffect")) and effect.Enabled then
-                effect.Enabled = false
             end
         end
     end
@@ -481,7 +489,11 @@ local function createSlider(name, positionY, min, max, default, inverted, step, 
 
     local isDragging = false
     
-    local function updateValue(inputPos)
+        local function updateValue(inputPos)
+        -- HARD INTERACTION LOCK
+        if name == "Walk Speed" and ProfileSettings.SpeedMode ~= "Fast" then return end
+        if name == "Slow Speed" and ProfileSettings.SpeedMode ~= "Slow" then return end
+
         local relativeX = inputPos.X - Track.AbsolutePosition.X
         local percentage = math.clamp(relativeX / Track.AbsoluteSize.X, 0, 1)
         
@@ -490,7 +502,7 @@ local function createSlider(name, positionY, min, max, default, inverted, step, 
             rawValue = max - (percentage * (max - min))
         end
         
-        -- SNAP LOGIC
+        -- SNAP LOGIC (Precision Quantization)
         local snappedValue = math.round(rawValue / step) * step
         snappedValue = math.clamp(snappedValue, min, max)
         
