@@ -22,6 +22,8 @@ local ProfileSettings = {
     PlayerESPActive = false,
     KillGlowActive = false, 
     GlitchActive = false, 
+    FastMineActive = false,
+    MineSpeedMultiplier = 1.0,
     CurrentSpeedMultiplier = 1.0,
     SlowSpeedMultiplier = 1.0,
     SpeedMode = "Fast" -- "Fast" or "Slow"
@@ -280,33 +282,39 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ---------------------------------------------------------------------
---  SUPREME ANTI-RAGDOLL & GLOW KILLER
+--  SUPREME ANTI-RAGDOLL & GLOW KILLER (MAXIMALIST EDITION)
 -- ---------------------------------------------------------------------
 RunService.Heartbeat:Connect(function()
-    -- 1. RAGDOLL EXTERMINATOR (R15 Blueprint Neutralizer)
+    -- 1. RAGDOLL EXTERMINATOR (Targeting Blueprints, Factory, and Client System)
     if ProfileSettings.NoRagdollActive then
         local char = LocalPlayer.Character
         if char then
+            -- Destroy all constraints and joints that cause ragdolling
             for _, obj in ipairs(char:GetDescendants()) do
-                if obj:IsA("BallSocketConstraint") or obj:IsA("HingeConstraint") or obj:IsA("SpringConstraint") then
+                if obj:IsA("BallSocketConstraint") or obj:IsA("HingeConstraint") or obj:IsA("SpringConstraint") or obj:IsA("Solder") or obj.Name:find("Ragdoll") or obj.Name:find("Blueprint") then
                     obj:Destroy()
                 end
             end
         end
     end
 
-    -- 2. GLOW KILLER CORE
+    -- 2. GLOW KILLER CORE (Total Neon Neutralization)
     if ProfileSettings.KillGlowActive then
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
                 part.Material = Enum.Material.SmoothPlastic
             end
         end
+        for _, effect in ipairs(Lighting:GetChildren()) do
+            if (effect:IsA("BloomEffect") or effect:IsA("BlurEffect")) and effect.Enabled then
+                effect.Enabled = false
+            end
+        end
     end
 end)
 
 -- ---------------------------------------------------------------------
---  3. GRAPHICAL USER INTERFACE (ZEN PASTEL EDITION)
+--  3. GRAPHICAL USER INTERFACE (ZEN PASTEL EDITION - PRECISION LAYOUT)
 -- ---------------------------------------------------------------------
 
 local ScreenGui = Instance.new("ScreenGui")
@@ -315,7 +323,7 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 300, 0, 450) 
+MainFrame.Size = UDim2.new(0, 320, 0, 650) 
 MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(230, 255, 230) -- Light Pastel Green
 MainFrame.Active = true
@@ -337,7 +345,7 @@ local ScrollFrame = Instance.new("ScrollingFrame")
 ScrollFrame.Size = UDim2.new(1, 0, 1, -40)
 ScrollFrame.Position = UDim2.new(0, 0, 0, 40)
 ScrollFrame.BackgroundTransparency = 1
-ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 600) -- Expanded to prevent smushing
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 900) -- INCREASED CANVAS
 ScrollFrame.ScrollBarThickness = 4
 ScrollFrame.Parent = MainFrame
 
@@ -375,29 +383,14 @@ local function createButton(name, positionY, callback)
     Button.MouseButton1Click:Connect(callback)
 end
 
--- Togglable features with strictly spaced offsets
+-- RIGID POSITIONING SYSTEM (No more smushing!)
 createToggle("Auto Buy Bombs", 10, function(s) ProfileSettings.AutoBuyActive = s end)
 createToggle("Instant E-Mining", 50, function(s) ProfileSettings.InstantInteractions = s end)
 createToggle("Infinite Multi-Jump", 90, function(s) ProfileSettings.MultiJumpActive = s end)
 createToggle("No Ragdoll", 130, function(s) ProfileSettings.NoRagdollActive = s end)
 createToggle("No Damage", 170, function(s) ProfileSettings.NoDamageActive = s end)
 createToggle("Player ESP", 210, function(s) ProfileSettings.PlayerESPActive = s end)
-createToggle("Kill Glow/Sparkles", 250, function(s) 
-    ProfileSettings.KillGlowActive = s
-    local Lighting = game:GetService("Lighting")
-    for _, effect in ipairs(Lighting:GetChildren()) do
-        if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") then
-            effect.Enabled = not s
-        end
-    end
-    if s then
-        for _, part in ipairs(workspace:GetDescendants()) do
-            if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
-                part.Material = Enum.Material.SmoothPlastic
-            end
-        end
-    end
-end)
+createToggle("Kill Glow/Sparkles", 250, function(s) ProfileSettings.KillGlowActive = s end)
 createToggle("Glitch Lag FX", 290, function(s) 
     ProfileSettings.GlitchActive = s 
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
@@ -409,11 +402,12 @@ createToggle("Glitch Lag FX", 290, function(s)
         end
     end
 end)
+createToggle("Fast Mine", 330, function(s) ProfileSettings.FastMineActive = s end)
 
--- Speed Mode Selector (Positioned safely below toggles)
+-- Speed Mode Selector (Positioned at 370 - Clearly Separated)
 local ModeFrame = Instance.new("Frame")
 ModeFrame.Size = UDim2.new(0.9, 0, 0, 40)
-ModeFrame.Position = UDim2.new(0.05, 0, 0, 340)
+ModeFrame.Position = UDim2.new(0.05, 0, 0, 370)
 ModeFrame.BackgroundTransparency = 1
 ModeFrame.Parent = ScrollFrame
 
@@ -433,140 +427,82 @@ SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
 SlowBtn.TextColor3 = Color3.new(1, 1, 1)
 Instance.new("UICorner", SlowBtn)
 
--- Slider 1: Speed Multiplier (Fast)
-local SpeedSliContainer = Instance.new("Frame")
-SpeedSliContainer.Size = UDim2.new(0.9, 0, 0, 45)
-SpeedSliContainer.Position = UDim2.new(0.05, 0, 0, 390)
-SpeedSliContainer.BackgroundTransparency = 0.2
-SpeedSliContainer.Parent = ScrollFrame
+-- SLIDERS SECTION (Starting at 420)
+local function createSlider(name, positionY, min, max, default, callback)
+    local Container = Instance.new("Frame")
+    Container.Size = UDim2.new(0.9, 0, 0, 45)
+    Container.Position = UDim2.new(0.05, 0, 0, positionY)
+    Container.BackgroundTransparency = 0.2
+    Container.Parent = ScrollFrame
 
-local SpeedSliLabel = Instance.new("TextLabel")
-SpeedSliLabel.Size = UDim2.new(1, 0, 0, 20)
-SpeedSliLabel.BackgroundTransparency = 1
-SpeedSliLabel.Text = "Walk Speed: 1.0x"
-SpeedSliLabel.TextColor3 = Color3.new(0, 0, 0) -- Black Text
-SpeedSliLabel.Font = Enum.Font.SourceSans
-SpeedSliLabel.TextSize = 13
-SpeedSliLabel.TextXAlignment = Enum.TextXAlignment.Left
-SpeedSliLabel.Parent = SpeedSliContainer
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(1, 0, 0, 20)
+    Label.BackgroundTransparency = 1
+    Label.Text = name .. ": " .. default .. "x"
+    Label.TextColor3 = Color3.new(0, 0, 0) -- BLACK TEXT
+    Label.Font = Enum.Font.SourceSans
+    Label.TextSize = 13
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = Container
 
-local SpeedSliTrack = Instance.new("Frame")
-SpeedSliTrack.Size = UDim2.new(1, 0, 0, 6)
-SpeedSliTrack.Position = UDim2.new(0, 0, 0, 28)
-SpeedSliTrack.BackgroundColor3 = Color3.fromRGB(180, 210, 180)
-SpeedSliTrack.Parent = SpeedSliContainer
-Instance.new("UICorner", SpeedSliTrack).CornerRadius = UDim.new(0, 3)
+    local Track = Instance.new("Frame")
+    Track.Size = UDim2.new(1, 0, 0, 6)
+    Track.Position = UDim2.new(0, 0, 0, 28)
+    Track.BackgroundColor3 = Color3.fromRGB(180, 210, 180)
+    Track.Parent = Container
+    Instance.new("UICorner", Track).CornerRadius = UDim.new(0, 3)
 
-local SpeedSliBtn = Instance.new("TextButton")
-SpeedSliBtn.Size = UDim2.new(0, 14, 0, 14)
-SpeedSliBtn.Position = UDim2.new(0, 0, 0.5, -7)
-SpeedSliBtn.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
-SpeedSliBtn.Text = ""
-SpeedSliBtn.Parent = SpeedSliTrack
-Instance.new("UICorner", SpeedSliBtn).CornerRadius = UDim.new(1, 0)
+    local Btn = Instance.new("TextButton")
+    Btn.Size = UDim2.new(0, 14, 0, 14)
+    Btn.Position = UDim2.new(0, 0, 0.5, -7)
+    Btn.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+    Btn.Text = ""
+    Btn.Parent = Track
+    Instance.new("UICorner", Btn).CornerRadius = UDim.new(1, 0)
 
--- Slider 2: Slow Speed Multiplier (Snail)
-local SlowSliContainer = Instance.new("Frame")
-SlowSliContainer.Size = UDim2.new(0.9, 0, 0, 45)
-SlowSliContainer.Position = UDim2.new(0.05, 0, 0, 440)
-SlowSliContainer.BackgroundTransparency = 1
-SlowSliContainer.Parent = ScrollFrame
+    local isDragging = false
+    Btn.InputBegan:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then isDragging = true end
+    end)
 
-local SlowSliLabel = Instance.new("TextLabel")
-SlowSliLabel.Size = UDim2.new(1, 0, 0, 20)
-SlowSliLabel.BackgroundTransparency = 1
-SlowSliLabel.Text = "Slow Speed: 1.0x"
-SlowSliLabel.TextColor3 = Color3.new(0, 0, 0) -- Black Text
-SlowSliLabel.Font = Enum.Font.SourceSans
-SlowSliLabel.TextSize = 13
-SlowSliLabel.TextXAlignment = Enum.TextXAlignment.Left
-SlowSliLabel.Parent = SlowSliContainer
+    UserInputService.InputChanged:Connect(function(input)
+        if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local relativeX = input.Position.X - Track.AbsolutePosition.X
+            local percentage = math.clamp(relativeX / Track.AbsoluteSize.X, 0, 1)
+            local value = min + (percentage * (max - min))
+            local snap = math.floor((value * 10) + 0.5) / 10
+            
+            Btn.Position = UDim2.new((snap - min) / (max - min), -7, 0.5, -7)
+            Label.Text = name .. ": " .. string.format("%.1f", snap) .. "x"
+            callback(snap)
+        end
+    end)
 
-local SlowSliTrack = Instance.new("Frame")
-SlowSliTrack.Size = UDim2.new(1, 0, 0, 6)
-SlowSliTrack.Position = UDim2.new(0, 0, 0, 28)
-SlowSliTrack.BackgroundColor3 = Color3.fromRGB(180, 210, 180)
-SlowSliTrack.Parent = SlowSliContainer
-Instance.new("UICorner", SlowSliTrack).CornerRadius = UDim.new(0, 3)
-
-local SlowSliBtn = Instance.new("TextButton")
-SlowSliBtn.Size = UDim2.new(0, 14, 0, 14)
-SlowSliBtn.Position = UDim2.new(1, -7, 0.5, -7)
-SlowSliBtn.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
-SlowSliBtn.Text = ""
-SlowSliBtn.Parent = SlowSliTrack
-Instance.new("UICorner", SlowSliBtn).CornerRadius = UDim.new(1, 0)
-
-local isSliDragging = false
-local isSlowSliDragging = false
-
-local function updateSpeedSlider(input)
-    local trackWidth = SpeedSliTrack.AbsoluteSize.X
-    local relativeX = input.Position.X - SpeedSliTrack.AbsolutePosition.X
-    local percentage = math.clamp(relativeX / trackWidth, 0, 1)
-    local rawValue = 1.0 + (percentage * 4.0)
-    local snapValue = math.floor((rawValue * 2) + 0.5) / 2
-    local finalPercentage = (snapValue - 1.0) / 4.0
-    
-    SpeedSliBtn.Position = UDim2.new(finalPercentage, -7, 0.5, -7)
-    SpeedSliLabel.Text = "Walk Speed: " .. string.format("%.1f", snapValue) .. "x"
-    ProfileSettings.CurrentSpeedMultiplier = snapValue
-    
-    local char = LocalPlayer.Character
-    if char and char:FindFirstChildOfClass("Humanoid") then
-        char:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * snapValue
-    end
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isDragging = false end
+    end)
 end
 
-local function updateSlowSlider(input)
-    local trackWidth = SlowSliTrack.AbsoluteSize.X
-    local relativeX = input.Position.X - SlowSliTrack.AbsolutePosition.X
-    local percentage = math.clamp(relativeX / trackWidth, 0, 1)
-    local rawValue = 0.25 + (percentage * 0.75)
-    local snapValue = math.floor((rawValue * 20) + 0.5) / 20
-    local finalPercentage = (snapValue - 0.25) / 0.75
-    
-    SlowSliBtn.Position = UDim2.new(finalPercentage, -7, 0.5, -7)
-    SlowSliLabel.Text = "Slow Speed: " .. string.format("%.2f", snapValue) .. "x"
-    ProfileSettings.SlowSpeedMultiplier = snapValue
-    
-    local char = LocalPlayer.Character
-    if char and char:FindFirstChildOfClass("Humanoid") then
-        char:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * snapValue
+createSlider("Walk Speed", 420, 1, 5, 1, function(v)
+    ProfileSettings.CurrentSpeedMultiplier = v
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+        LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * v
     end
-end
-
-SpeedSliBtn.InputBegan:Connect(function(input)
-    if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and ProfileSettings.SpeedMode == "Fast" then isSliDragging = true end
-end)
-SlowSliBtn.InputBegan:Connect(function(input)
-    if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and ProfileSettings.SpeedMode == "Slow" then isSlowSliDragging = true end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if isSliDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then updateSpeedSlider(input) end
-    if isSlowSliDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then updateSlowSlider(input) end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isSliDragging = false isSlowSliDragging = false end
 end)
 
-FastBtn.MouseButton1Click:Connect(function()
-    ProfileSettings.SpeedMode = "Fast"
-    FastBtn.BackgroundColor3 = Color3.fromRGB(140, 200, 140)
-    SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
-    SpeedSliContainer.BackgroundTransparency = 0.2
-    SlowSliContainer.BackgroundTransparency = 1
+createSlider("Slow Speed", 470, 0.25, 1, 1, function(v)
+    ProfileSettings.SlowSpeedMultiplier = v
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+        LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * v
+    end
 end)
 
-SlowBtn.MouseButton1Click:Connect(function()
-    ProfileSettings.SpeedMode = "Slow"
-    SlowBtn.BackgroundColor3 = Color3.fromRGB(140, 200, 140)
-    FastBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
-    SlowSliContainer.BackgroundTransparency = 0.2
-    SpeedSliContainer.BackgroundTransparency = 1
+createSlider("Mine Boost", 520, 1, 10, 1, function(v)
+    ProfileSettings.MineSpeedMultiplier = v
 end)
 
-createButton("TELEPORT TO SPAWN", 490, function()
+-- Final Button at 570
+createButton("TELEPORT TO SPAWN", 570, function()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
         local spawn = workspace:FindFirstChild("SpawnLocation", true)
@@ -574,6 +510,19 @@ createButton("TELEPORT TO SPAWN", 490, function()
             TweenService:Create(char.HumanoidRootPart, TweenInfo.new(0.5), {CFrame = spawn.CFrame + Vector3.new(0, 3, 0)}):Play()
         end
     end
+end)
+
+-- Speed Mode Logic
+FastBtn.MouseButton1Click:Connect(function()
+    ProfileSettings.SpeedMode = "Fast"
+    FastBtn.BackgroundColor3 = Color3.fromRGB(140, 200, 140)
+    SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
+end)
+
+SlowBtn.MouseButton1Click:Connect(function()
+    ProfileSettings.SpeedMode = "Slow"
+    SlowBtn.BackgroundColor3 = Color3.fromRGB(140, 200, 140)
+    FastBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
