@@ -367,7 +367,7 @@ local ScrollFrame = Instance.new("ScrollingFrame")
 ScrollFrame.Size = UDim2.new(1, 0, 1, -40)
 ScrollFrame.Position = UDim2.new(0, 0, 0, 40)
 ScrollFrame.BackgroundTransparency = 1
-ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 600) 
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 650) 
 ScrollFrame.ScrollBarThickness = 4
 ScrollFrame.Parent = MainFrame
 
@@ -447,7 +447,7 @@ SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
 SlowBtn.TextColor3 = Color3.new(1, 1, 1)
 Instance.new("UICorner", SlowBtn)
 
-local function createSlider(name, positionY, min, max, default, inverted, callback)
+local function createSlider(name, positionY, min, max, default, inverted, step, callback)
     local Container = Instance.new("Frame")
     Container.Size = UDim2.new(0.9, 0, 0, 45)
     Container.Position = UDim2.new(0.05, 0, 0, positionY)
@@ -481,26 +481,37 @@ local function createSlider(name, positionY, min, max, default, inverted, callba
 
     local isDragging = false
     
+    local function updateValue(inputPos)
+        local relativeX = inputPos.X - Track.AbsolutePosition.X
+        local percentage = math.clamp(relativeX / Track.AbsoluteSize.X, 0, 1)
+        
+        local rawValue = min + (percentage * (max - min))
+        if inverted then
+            rawValue = max - (percentage * (max - min))
+        end
+        
+        -- SNAP LOGIC
+        local snappedValue = math.round(rawValue / step) * step
+        snappedValue = math.clamp(snappedValue, min, max)
+        
+        -- Calculate EXACT percentage for button position based on snapped value
+        local snapPercentage = (snappedValue - min) / (max - min)
+        if inverted then
+            snapPercentage = (max - snappedValue) / (max - min)
+        end
+        
+        Btn.Position = UDim2.new(snapPercentage, -7, 0.5, -7)
+        Label.Text = name .. ": " .. string.format("%.2f", snappedValue) .. "x"
+        callback(snappedValue, Container)
+    end
+
     Btn.InputBegan:Connect(function(input)
         if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then isDragging = true end
     end)
 
     UserInputService.InputChanged:Connect(function(input)
         if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            local relativeX = input.Position.X - Track.AbsolutePosition.X
-            local percentage = math.clamp(relativeX / Track.AbsoluteSize.X, 0, 1)
-            
-            local value = min + (percentage * (max - min))
-            if inverted then
-                value = max - (percentage * (max - min))
-            end
-            
-            -- Snap button to exact percentage
-            local btnPos = inverted and (1 - percentage) or percentage
-            Btn.Position = UDim2.new(btnPos, -7, 0.5, -7)
-            
-            Label.Text = name .. ": " .. string.format("%.2f", value) .. "x"
-            callback(value, Container)
+            updateValue(input.Position)
         end
     end)
 
@@ -508,17 +519,24 @@ local function createSlider(name, positionY, min, max, default, inverted, callba
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then isDragging = false end
     end)
 
+    -- Set initial position
+    local initialPercent = (default - min) / (max - min)
+    if inverted then initialPercent = (max - default) / (max - min) end
+    Btn.Position = UDim2.new(initialPercent, -7, 0.5, -7)
+
     return Container
 end
 
-local walkSpeedContainer = createSlider("Walk Speed", 380, 1, 5, 1, false, function(v, container)
+local walkSpeedContainer = createSlider("Walk Speed", 380, 1, 5, 1, false, 0.5, function(v, container)
+    if ProfileSettings.SpeedMode ~= "Fast" then return end
     ProfileSettings.CurrentSpeedMultiplier = v
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * v
     end
 end)
 
-local slowSpeedContainer = createSlider("Slow Speed", 430, 0.25, 1, 1, true, function(v, container)
+local slowSpeedContainer = createSlider("Slow Speed", 430, 0.25, 1, 1, true, 0.125, function(v, container)
+    if ProfileSettings.SpeedMode ~= "Slow" then return end
     ProfileSettings.SlowSpeedMultiplier = v
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
         LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = 16 * v
@@ -539,24 +557,13 @@ local function updateSliderInteractions()
     if ProfileSettings.SpeedMode == "Fast" then
         slowSpeedContainer.BackgroundTransparency = 0.6
         slowSpeedContainer.Children.TextLabel.TextTransparency = 0.5
-        -- Note: To fully disable a custom slider, we simply check SpeedMode in the slider callback
+        walkSpeedContainer.BackgroundTransparency = 1
+        walkSpeedContainer.Children.TextLabel.TextTransparency = 0
     else
         walkSpeedContainer.BackgroundTransparency = 0.6
         walkSpeedContainer.Children.TextLabel.TextTransparency = 0.5
-    end
-    
-    -- Reset all first
-    slowSpeedContainer.BackgroundTransparency = 1
-    slowSpeedContainer.Children.TextLabel.TextTransparency = 0
-    walkSpeedContainer.BackgroundTransparency = 1
-    walkSpeedContainer.Children.TextLabel.TextTransparency = 0
-    
-    if ProfileSettings.SpeedMode == "Fast" then
-        slowSpeedContainer.BackgroundTransparency = 0.6
-        slowSpeedContainer.Children.TextLabel.TextTransparency = 0.5
-    else
-        walkSpeedContainer.BackgroundTransparency = 0.6
-        walkSpeedContainer.Children.TextLabel.TextTransparency = 0.5
+        slowSpeedContainer.BackgroundTransparency = 1
+        slowSpeedContainer.Children.TextLabel.TextTransparency = 0
     end
 end
 
