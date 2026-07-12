@@ -1,5 +1,5 @@
 -- =====================================================================
---  MINE A MOUNTAIN: UNIVERSAL SAFE AUTOMATION PANEL (GLITCH EDITION)
+--  MINE A MOUNTAIN: UNIVERSAL SAFE AUTOMATION PANEL (ZEN GLITCH EDITION)
 -- =====================================================================
 
 local Players = game:GetService("Players")
@@ -8,6 +8,7 @@ local ProximityPromptService = game:GetService("ProximityPromptService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService") 
 local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -19,14 +20,13 @@ local ProfileSettings = {
     NoRagdollActive = false,
     NoDamageActive = false,
     PlayerESPActive = false,
-    KillGlowActive = false,
+    KillGlowActive = false, 
     GlitchActive = false, 
     CurrentSpeedMultiplier = 1.0,
     SlowSpeedMultiplier = 1.0,
     SpeedMode = "Fast" -- "Fast" or "Slow"
 }
 
-local maxBonusJumps = 10
 local jumpCount = 0
 
 -- ---------------------------------------------------------------------
@@ -147,11 +147,9 @@ RunService.Heartbeat:Connect(function()
     local rootPart = char:FindFirstChild("HumanoidRootPart")
     if not humanoid or not rootPart then return end
 
-    -- Fix 1: Only activate ghosting if moving or jumping (Velocity check)
     local isMoving = humanoid.MoveDirection.Magnitude > 0 or rootPart.Velocity.Magnitude > 0.1
     if not isMoving then return end
     
-    -- Fix 2: Dynamic interval based on current speed mode/multiplier
     local currentMult = (ProfileSettings.SpeedMode == "Fast") and ProfileSettings.CurrentSpeedMultiplier or ProfileSettings.SlowSpeedMultiplier
     local dynamicDuration = BASE_FRAME_DURATION / math.clamp(currentMult, 0.1, 5)
     
@@ -172,7 +170,6 @@ local function applyLagEffect(track)
         
         if ProfileSettings.GlitchActive then
             track:AdjustSpeed(0)
-            -- Animation stutter also scales with speed multiplier for consistency
             local currentMult = (ProfileSettings.SpeedMode == "Fast") and ProfileSettings.CurrentSpeedMultiplier or ProfileSettings.SlowSpeedMultiplier
             local skipInterval = 0.15 / math.clamp(currentMult, 0.1, 5)
             
@@ -225,10 +222,9 @@ local function ManageCharacter(character)
     local stateConnection
     stateConnection = humanoid.StateChanged:Connect(function(_, newState)
         if ProfileSettings.NoRagdollActive then
-            -- Aggressive recovery: Force the character out of physics/ragdoll states instantly!
             if (newState == Enum.HumanoidStateType.Physics or newState == Enum.HumanoidStateType.Ragdoll or newState == Enum.HumanoidStateType.FallingDown) then
                 humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-                rootPart.Velocity = Vector3.new(0,0,0) -- Kill inertia to prevent rolling
+                rootPart.Velocity = Vector3.new(0,0,0)
             end
         end
         if newState == Enum.HumanoidStateType.Landed then
@@ -270,30 +266,37 @@ RunService.Heartbeat:Connect(function()
     local rootPart = char and char:FindFirstChild("HumanoidRootPart")
     if not humanoid or not rootPart then return end
 
-    -- 1. Continuous Ascent (Hold Space)
     if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-        -- REMOVED State Check: Now floats regardless of state as long as Space is held!
         rootPart.Velocity = Vector3.new(rootPart.Velocity.X, humanoid.JumpPower * 0.8, rootPart.Velocity.Z)
     end
 
-    -- 2. Soft Land / Velocity Kill
-    -- Enhanced check for falling speed
     if rootPart.Velocity.Y < -40 then 
         local ray = Ray.new(rootPart.Position, Vector3.new(0, -15, 0))
         local part = workspace:FindPartOnRay(ray, char)
         if part then
-            -- INSTANT VELOCITY KILL: This prevents ragdoll triggers and "SPLAT" landings!
             rootPart.Velocity = Vector3.new(rootPart.Velocity.X, -2, rootPart.Velocity.Z)
         end
     end
 end)
 
 -- ---------------------------------------------------------------------
---  GLOW KILLER CORE
+--  SUPREME ANTI-RAGDOLL & GLOW KILLER
 -- ---------------------------------------------------------------------
 RunService.Heartbeat:Connect(function()
+    -- 1. RAGDOLL EXTERMINATOR (R15 Blueprint Neutralizer)
+    if ProfileSettings.NoRagdollActive then
+        local char = LocalPlayer.Character
+        if char then
+            for _, obj in ipairs(char:GetDescendants()) do
+                if obj:IsA("BallSocketConstraint") or obj:IsA("HingeConstraint") or obj:IsA("SpringConstraint") then
+                    obj:Destroy()
+                end
+            end
+        end
+    end
+
+    -- 2. GLOW KILLER CORE
     if ProfileSettings.KillGlowActive then
-        -- Scanning for Neon parts and switching them to SmoothPlastic to kill the glow!
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
                 part.Material = Enum.Material.SmoothPlastic
@@ -303,7 +306,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ---------------------------------------------------------------------
---  3. GRAPHICAL USER INTERFACE
+--  3. GRAPHICAL USER INTERFACE (ZEN PASTEL EDITION)
 -- ---------------------------------------------------------------------
 
 local ScreenGui = Instance.new("ScreenGui")
@@ -312,29 +315,29 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 300, 0, 400) 
+MainFrame.Size = UDim2.new(0, 300, 0, 450) 
 MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
-MainFrame.BackgroundColor3 = Color3.fromRGB(200, 230, 200)
+MainFrame.BackgroundColor3 = Color3.fromRGB(230, 255, 230) -- Light Pastel Green
 MainFrame.Active = true
 MainFrame.Draggable = true 
 MainFrame.Parent = ScreenGui
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
 
 local HeaderLabel = Instance.new("TextLabel")
-HeaderLabel.Size = UDim2.new(1, 0, 0, 35)
-HeaderLabel.BackgroundColor3 = Color3.fromRGB(160, 200, 160)
-HeaderLabel.Text = "Mine A Mountain - Glitch Edition"
-HeaderLabel.TextColor3 = Color3.fromRGB(40, 80, 40)
+HeaderLabel.Size = UDim2.new(1, 0, 0, 40)
+HeaderLabel.BackgroundColor3 = Color3.fromRGB(180, 230, 180) -- Medium Pastel Green
+HeaderLabel.Text = "Mine A Mountain - Zen Edition"
+HeaderLabel.TextColor3 = Color3.fromRGB(60, 120, 60)
 HeaderLabel.Font = Enum.Font.SourceSansBold
-HeaderLabel.TextSize = 14
+HeaderLabel.TextSize = 16
 HeaderLabel.Parent = MainFrame
-Instance.new("UICorner", HeaderLabel).CornerRadius = UDim.new(0, 8)
+Instance.new("UICorner", HeaderLabel).CornerRadius = UDim.new(0, 12)
 
 local ScrollFrame = Instance.new("ScrollingFrame")
-ScrollFrame.Size = UDim2.new(1, 0, 1, -35)
-ScrollFrame.Position = UDim2.new(0, 0, 0, 35)
+ScrollFrame.Size = UDim2.new(1, 0, 1, -40)
+ScrollFrame.Position = UDim2.new(0, 0, 0, 40)
 ScrollFrame.BackgroundTransparency = 1
-ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 800)
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 600) -- Expanded to prevent smushing
 ScrollFrame.ScrollBarThickness = 4
 ScrollFrame.Parent = MainFrame
 
@@ -342,19 +345,19 @@ local function createToggle(name, positionY, callback)
     local Button = Instance.new("TextButton")
     Button.Size = UDim2.new(0.9, 0, 0, 35)
     Button.Position = UDim2.new(0.05, 0, 0, positionY)
-    Button.BackgroundColor3 = Color3.fromRGB(220, 245, 220)
+    Button.BackgroundColor3 = Color3.fromRGB(240, 255, 240)
     Button.Text = name .. ": OFF"
-    Button.TextColor3 = Color3.fromRGB(100, 140, 100)
+    Button.TextColor3 = Color3.fromRGB(80, 150, 80)
     Button.Font = Enum.Font.SourceSans
     Button.TextSize = 14
     Button.Parent = ScrollFrame
-    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 6)
 
     local toggled = false
     Button.MouseButton1Click:Connect(function()
         toggled = not toggled
-        Button.BackgroundColor3 = toggled and Color3.fromRGB(140, 200, 140) or Color3.fromRGB(220, 245, 220)
-        Button.TextColor3 = toggled and Color3.fromRGB(40, 100, 40) or Color3.fromRGB(100, 140, 100)
+        Button.BackgroundColor3 = toggled and Color3.fromRGB(160, 220, 160) or Color3.fromRGB(240, 255, 240)
+        Button.TextColor3 = toggled and Color3.fromRGB(40, 100, 40) or Color3.fromRGB(80, 150, 80)
         Button.Text = name .. (toggled and ": ON" or ": OFF")
         callback(toggled)
     end)
@@ -364,14 +367,15 @@ local function createButton(name, positionY, callback)
     local Button = Instance.new("TextButton")
     Button.Size = UDim2.new(0.9, 0, 0, 35)
     Button.Position = UDim2.new(0.05, 0, 0, positionY)
-    Button.BackgroundColor3 = Color3.fromRGB(170, 210, 170)
+    Button.BackgroundColor3 = Color3.fromRGB(180, 230, 180)
     Button.Text = name
-    Button.TextColor3 = Color3.fromRGB(40, 80, 40)
+    Button.TextColor3 = Color3.fromRGB(60, 120, 60)
     Button.Parent = ScrollFrame
-    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 6)
     Button.MouseButton1Click:Connect(callback)
 end
 
+-- Togglable features with strictly spaced offsets
 createToggle("Auto Buy Bombs", 10, function(s) ProfileSettings.AutoBuyActive = s end)
 createToggle("Instant E-Mining", 50, function(s) ProfileSettings.InstantInteractions = s end)
 createToggle("Infinite Multi-Jump", 90, function(s) ProfileSettings.MultiJumpActive = s end)
@@ -386,7 +390,6 @@ createToggle("Kill Glow/Sparkles", 250, function(s)
             effect.Enabled = not s
         end
     end
-    -- Initial sweep to kill glow immediately upon toggle
     if s then
         for _, part in ipairs(workspace:GetDescendants()) do
             if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
@@ -407,10 +410,10 @@ createToggle("Glitch Lag FX", 290, function(s)
     end
 end)
 
--- Speed Mode Selector
+-- Speed Mode Selector (Positioned safely below toggles)
 local ModeFrame = Instance.new("Frame")
 ModeFrame.Size = UDim2.new(0.9, 0, 0, 40)
-ModeFrame.Position = UDim2.new(0.05, 0, 0, 300)
+ModeFrame.Position = UDim2.new(0.05, 0, 0, 340)
 ModeFrame.BackgroundTransparency = 1
 ModeFrame.Parent = ScrollFrame
 
@@ -418,7 +421,7 @@ local FastBtn = Instance.new("TextButton", ModeFrame)
 FastBtn.Size = UDim2.new(0.48, 0, 1, 0)
 FastBtn.Position = UDim2.new(0, 0, 0, 0)
 FastBtn.Text = "FAST MODE"
-FastBtn.BackgroundColor3 = Color3.fromRGB(150, 210, 150)
+FastBtn.BackgroundColor3 = Color3.fromRGB(160, 220, 160)
 FastBtn.TextColor3 = Color3.new(1, 1, 1)
 Instance.new("UICorner", FastBtn)
 
@@ -426,14 +429,14 @@ local SlowBtn = Instance.new("TextButton", ModeFrame)
 SlowBtn.Size = UDim2.new(0.48, 0, 1, 0)
 SlowBtn.Position = UDim2.new(0.52, 0, 0, 0)
 SlowBtn.Text = "SLOW MODE"
-SlowBtn.BackgroundColor3 = Color3.fromRGB(220, 240, 220)
+SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
 SlowBtn.TextColor3 = Color3.new(1, 1, 1)
 Instance.new("UICorner", SlowBtn)
 
 -- Slider 1: Speed Multiplier (Fast)
 local SpeedSliContainer = Instance.new("Frame")
 SpeedSliContainer.Size = UDim2.new(0.9, 0, 0, 45)
-SpeedSliContainer.Position = UDim2.new(0.05, 0, 0, 350)
+SpeedSliContainer.Position = UDim2.new(0.05, 0, 0, 390)
 SpeedSliContainer.BackgroundTransparency = 0.2
 SpeedSliContainer.Parent = ScrollFrame
 
@@ -441,7 +444,7 @@ local SpeedSliLabel = Instance.new("TextLabel")
 SpeedSliLabel.Size = UDim2.new(1, 0, 0, 20)
 SpeedSliLabel.BackgroundTransparency = 1
 SpeedSliLabel.Text = "Walk Speed: 1.0x"
-SpeedSliLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+SpeedSliLabel.TextColor3 = Color3.new(0, 0, 0) -- Black Text
 SpeedSliLabel.Font = Enum.Font.SourceSans
 SpeedSliLabel.TextSize = 13
 SpeedSliLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -457,7 +460,7 @@ Instance.new("UICorner", SpeedSliTrack).CornerRadius = UDim.new(0, 3)
 local SpeedSliBtn = Instance.new("TextButton")
 SpeedSliBtn.Size = UDim2.new(0, 14, 0, 14)
 SpeedSliBtn.Position = UDim2.new(0, 0, 0.5, -7)
-SpeedSliBtn.BackgroundColor3 = Color3.fromRGB(180, 180, 180)
+SpeedSliBtn.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
 SpeedSliBtn.Text = ""
 SpeedSliBtn.Parent = SpeedSliTrack
 Instance.new("UICorner", SpeedSliBtn).CornerRadius = UDim.new(1, 0)
@@ -465,7 +468,7 @@ Instance.new("UICorner", SpeedSliBtn).CornerRadius = UDim.new(1, 0)
 -- Slider 2: Slow Speed Multiplier (Snail)
 local SlowSliContainer = Instance.new("Frame")
 SlowSliContainer.Size = UDim2.new(0.9, 0, 0, 45)
-SlowSliContainer.Position = UDim2.new(0.05, 0, 0, 400)
+SlowSliContainer.Position = UDim2.new(0.05, 0, 0, 440)
 SlowSliContainer.BackgroundTransparency = 1
 SlowSliContainer.Parent = ScrollFrame
 
@@ -473,7 +476,7 @@ local SlowSliLabel = Instance.new("TextLabel")
 SlowSliLabel.Size = UDim2.new(1, 0, 0, 20)
 SlowSliLabel.BackgroundTransparency = 1
 SlowSliLabel.Text = "Slow Speed: 1.0x"
-SlowSliLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+SlowSliLabel.TextColor3 = Color3.new(0, 0, 0) -- Black Text
 SlowSliLabel.Font = Enum.Font.SourceSans
 SlowSliLabel.TextSize = 13
 SlowSliLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -489,7 +492,7 @@ Instance.new("UICorner", SlowSliTrack).CornerRadius = UDim.new(0, 3)
 local SlowSliBtn = Instance.new("TextButton")
 SlowSliBtn.Size = UDim2.new(0, 14, 0, 14)
 SlowSliBtn.Position = UDim2.new(1, -7, 0.5, -7)
-SlowSliBtn.BackgroundColor3 = Color3.fromRGB(180, 180, 180)
+SlowSliBtn.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
 SlowSliBtn.Text = ""
 SlowSliBtn.Parent = SlowSliTrack
 Instance.new("UICorner", SlowSliBtn).CornerRadius = UDim.new(1, 0)
@@ -549,21 +552,21 @@ end)
 
 FastBtn.MouseButton1Click:Connect(function()
     ProfileSettings.SpeedMode = "Fast"
-    FastBtn.BackgroundColor3 = Color3.fromRGB(60, 110, 60)
-    SlowBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    FastBtn.BackgroundColor3 = Color3.fromRGB(140, 200, 140)
+    SlowBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
     SpeedSliContainer.BackgroundTransparency = 0.2
     SlowSliContainer.BackgroundTransparency = 1
 end)
 
 SlowBtn.MouseButton1Click:Connect(function()
     ProfileSettings.SpeedMode = "Slow"
-    SlowBtn.BackgroundColor3 = Color3.fromRGB(150, 210, 150)
-    FastBtn.BackgroundColor3 = Color3.fromRGB(220, 240, 220)
+    SlowBtn.BackgroundColor3 = Color3.fromRGB(140, 200, 140)
+    FastBtn.BackgroundColor3 = Color3.fromRGB(210, 240, 210)
     SlowSliContainer.BackgroundTransparency = 0.2
     SpeedSliContainer.BackgroundTransparency = 1
 end)
 
-createButton("TELEPORT TO SPAWN", 460, function()
+createButton("TELEPORT TO SPAWN", 490, function()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
         local spawn = workspace:FindFirstChild("SpawnLocation", true)
