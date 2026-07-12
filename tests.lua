@@ -19,7 +19,7 @@ local ProfileSettings = {
     NoRagdollActive = false,
     NoDamageActive = false,
     PlayerESPActive = false,
-    GlitchActive = false, -- NEW: Glitch Toggle
+    GlitchActive = false, -- Controls the "3 FPS" walking look
     CurrentSpeedMultiplier = 1.0
 }
 
@@ -106,18 +106,27 @@ task.spawn(function()
     end
 end)
 
--- GLITCH LAG ENGINE (From Pastebin)
+-- 3FPS GLITCH ENGINE
+-- This forces the character to snap positions, creating that "low frame rate" walking effect
+local lastUpdate = 0
+local frameTime = 1/3 -- Target 3 FPS for the visual "snap"
+
 RunService.Heartbeat:Connect(function()
     if ProfileSettings.GlitchActive then
-        local char = LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then
-            -- Aggressive stutter logic
-            local randomOffset = Vector3.new(math.random(-1,1), 0, math.random(-1,1)) * 0.5
-            root.CFrame = root.CFrame * CFrame.new(randomOffset)
-            
-            -- Force velocity jitter to confuse the server
-            root.AssemblyLinearVelocity = Vector3.new(math.random(-10,10), 0, math.random(-10,10))
+        local now = tick()
+        if now - lastUpdate >= frameTime then
+            lastUpdate = now
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then
+                -- The "Lag" Snap: We apply a tiny random offset and force the CFrame to update 
+                -- infrequently, which confuses the server's interpolation and looks like low FPS.
+                local randomOffset = Vector3.new(math.random(-5,5)/10, 0, math.random(-5,5)/10)
+                root.CFrame = root.CFrame * CFrame.new(randomOffset)
+                
+                -- Velocity jitter to further disrupt the movement smoothness
+                root.AssemblyLinearVelocity = Vector3.new(math.random(-15,15), 0, math.random(-15,15))
+            end
         end
     end
     
@@ -207,7 +216,7 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 240, 0, 520) -- Increased height for new toggle
+MainFrame.Size = UDim2.new(0, 240, 0, 520) 
 MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 MainFrame.Active = true
@@ -265,7 +274,7 @@ createToggle("Infinite Multi-Jump", 155, function(s) ProfileSettings.MultiJumpAc
 createToggle("No Ragdoll", 205, function(s) ProfileSettings.NoRagdollActive = s end)
 createToggle("No Damage", 255, function(s) ProfileSettings.NoDamageActive = s end)
 createToggle("Player ESP", 305, function(s) ProfileSettings.PlayerESPActive = s end)
-createToggle("Glitch Lag FX", 355, function(s) ProfileSettings.GlitchActive = s end) -- NEW TOGGLE
+createToggle("Glitch Lag FX", 355, function(s) ProfileSettings.GlitchActive = s end) 
 
 createButton("TELEPORT TO SPAWN", 405, function()
     local char = LocalPlayer.Character
