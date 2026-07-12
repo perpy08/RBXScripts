@@ -125,7 +125,8 @@ local function createGhostClone(char)
             part.CanTouch = false
             part.CanQuery = false
             part.Transparency = 0.5
-            part.Color = Color3.fromRGB(150, 150, 255)
+            local originalColor = part.Color
+            part.Color = Color3.new(originalColor.R * 0.7, originalColor.G * 0.7, originalColor.B * 0.7)
             TweenService:Create(part, TweenInfo.new(0.3), {Transparency = 1, Size = part.Size * 0.8}):Play()
         elseif part:IsA("Decal") or part:IsA("Texture") then
             part:Destroy()
