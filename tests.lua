@@ -19,6 +19,7 @@ local ProfileSettings = {
     NoRagdollActive = false,
     NoDamageActive = false,
     PlayerESPActive = false,
+    KillGlowActive = false,
     GlitchActive = false, 
     CurrentSpeedMultiplier = 1.0,
     SlowSpeedMultiplier = 1.0,
@@ -223,8 +224,12 @@ local function ManageCharacter(character)
 
     local stateConnection
     stateConnection = humanoid.StateChanged:Connect(function(_, newState)
-        if ProfileSettings.NoRagdollActive and (newState == Enum.HumanoidStateType.Physics or newState == Enum.HumanoidStateType.Ragdoll or newState == Enum.HumanoidStateType.FallingDown) then
-            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        if ProfileSettings.NoRagdollActive then
+            -- Aggressive recovery: Force the character out of physics/ragdoll states instantly!
+            if (newState == Enum.HumanoidStateType.Physics or newState == Enum.HumanoidStateType.Ragdoll or newState == Enum.HumanoidStateType.FallingDown) then
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                rootPart.Velocity = Vector3.new(0,0,0) -- Kill inertia to prevent rolling
+            end
         end
         if newState == Enum.HumanoidStateType.Landed then
             jumpCount = 0
@@ -267,20 +272,32 @@ RunService.Heartbeat:Connect(function()
 
     -- 1. Continuous Ascent (Hold Space)
     if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-        local state = humanoid:GetState()
-        if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
-            -- Apply upward force every frame while space is held
-            rootPart.Velocity = Vector3.new(rootPart.Velocity.X, humanoid.JumpPower * 0.8, rootPart.Velocity.Z)
-        end
+        -- REMOVED State Check: Now floats regardless of state as long as Space is held!
+        rootPart.Velocity = Vector3.new(rootPart.Velocity.X, humanoid.JumpPower * 0.8, rootPart.Velocity.Z)
     end
 
     -- 2. Soft Land / Velocity Kill
-    -- If we are falling fast and close to the ground, dampen the speed
-    if rootPart.Velocity.Y < -50 then 
-        local ray = Ray.new(rootPart.Position, Vector3.new(0, -10, 0))
+    -- Enhanced check for falling speed
+    if rootPart.Velocity.Y < -40 then 
+        local ray = Ray.new(rootPart.Position, Vector3.new(0, -15, 0))
         local part = workspace:FindPartOnRay(ray, char)
         if part then
-            rootPart.Velocity = Vector3.new(rootPart.Velocity.X, -5, rootPart.Velocity.Z)
+            -- INSTANT VELOCITY KILL: This prevents ragdoll triggers and "SPLAT" landings!
+            rootPart.Velocity = Vector3.new(rootPart.Velocity.X, -2, rootPart.Velocity.Z)
+        end
+    end
+end)
+
+-- ---------------------------------------------------------------------
+--  GLOW KILLER CORE
+-- ---------------------------------------------------------------------
+RunService.Heartbeat:Connect(function()
+    if ProfileSettings.KillGlowActive then
+        -- Scanning for Neon parts and switching them to SmoothPlastic to kill the glow!
+        for _, part in ipairs(workspace:GetDescendants()) do
+            if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
+                part.Material = Enum.Material.SmoothPlastic
+            end
         end
     end
 end)
@@ -361,7 +378,24 @@ createToggle("Infinite Multi-Jump", 90, function(s) ProfileSettings.MultiJumpAct
 createToggle("No Ragdoll", 130, function(s) ProfileSettings.NoRagdollActive = s end)
 createToggle("No Damage", 170, function(s) ProfileSettings.NoDamageActive = s end)
 createToggle("Player ESP", 210, function(s) ProfileSettings.PlayerESPActive = s end)
-createToggle("Glitch Lag FX", 250, function(s) 
+createToggle("Kill Glow/Sparkles", 250, function(s) 
+    ProfileSettings.KillGlowActive = s
+    local Lighting = game:GetService("Lighting")
+    for _, effect in ipairs(Lighting:GetChildren()) do
+        if effect:IsA("BloomEffect") or effect:IsA("BlurEffect") then
+            effect.Enabled = not s
+        end
+    end
+    -- Initial sweep to kill glow immediately upon toggle
+    if s then
+        for _, part in ipairs(workspace:GetDescendants()) do
+            if part:IsA("BasePart") and part.Material == Enum.Material.Neon then
+                part.Material = Enum.Material.SmoothPlastic
+            end
+        end
+    end
+end)
+createToggle("Glitch Lag FX", 290, function(s) 
     ProfileSettings.GlitchActive = s 
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
         local animator = LocalPlayer.Character.Humanoid:FindFirstChildOfClass("Animator")
