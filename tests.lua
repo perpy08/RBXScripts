@@ -203,10 +203,11 @@ MainFrame.Parent = ScreenGui
 -- Dragging logic moved to end of GUI section to avoid nil references!
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 
-local HeaderLabel = Instance.new("TextLabel")
+local HeaderLabel = Instance.new("TextButton")
 HeaderLabel.Size = UDim2.new(1, 0, 0, 35)
 HeaderLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 HeaderLabel.Text = "Mine A Mountain"
+HeaderLabel.AutoButtonColor = false
 HeaderLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 HeaderLabel.Font = Enum.Font.SourceSansBold
 HeaderLabel.TextSize = 14
@@ -221,23 +222,25 @@ local function updateInput()
     MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 end
 
-UserInputService.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        local guiObject = LocalPlayer.PlayerGui:GetGuiObjectAtPosition(input.Position.X, input.Position.Y)
-        if guiObject and (guiObject == HeaderLabel or guiObject:IsDescendantOf(HeaderLabel)) then
-            dragging = true
-            dragStart = input.Position
-            startPos = MainFrame.Position
-            dragInput = input
-            
-            local connection
-            connection = input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                    connection:Disconnect()
-                end
-            end)
+HeaderLabel.MouseButton1Down:Connect(function()
+    dragging = true
+    dragStart = UserInputService:GetMouseLocation()
+    startPos = MainFrame.Position
+    
+    local connection
+    connection = UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            connection:Disconnect()
         end
+    end)
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local mousePos = UserInputService:GetMouseLocation()
+        local delta = mousePos - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
 end)
 
