@@ -416,25 +416,21 @@ local function updateAnimSlider(input)
     local trackWidth = AnimSliTrack.AbsoluteSize.X
     local relativeX = input.Position.X - AnimSliTrack.AbsolutePosition.X
     local percentage = math.clamp(relativeX / trackWidth, 0, 1)
-    -- Left (0) is 0.25, Right (1) is 1.0
-    local rawValue = 0.25 + (percentage * 0.75)
+    -- We want the slider to act as a WALK SPEED multiplier in Slow Mode
+    -- Right (1.0) = Normal Speed, Left (0.0) = 0.25x Speed
+    local rawValue = 1.0 - (percentage * 0.75)
     local snapValue = math.floor((rawValue * 20) + 0.5) / 20
-    local finalPercentage = (snapValue - 0.25) / 0.75
+    local finalPercentage = (1.0 - snapValue) / 0.75
     
-    AnimSliBtn.Position = UDim2.new(finalPercentage, -7, 0.5, -7)
-    AnimSliLabel.Text = "Anim Speed: " .. string.format("%.2f", snapValue) .. "x"
+    AnimSliBtn.Position = UDim2.new(math.clamp(finalPercentage, 0, 1), -7, 0.5, -7)
+    AnimSliLabel.Text = "Slow Speed: " .. string.format("%.2f", snapValue) .. "x"
     ProfileSettings.AnimSpeedMultiplier = snapValue
     
     local char = LocalPlayer.Character
     if char and char:FindFirstChildOfClass("Humanoid") then
-        local animator = char.Humanoid:FindFirstChildOfClass("Animator")
-        if animator then
-            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                if not ProfileSettings.GlitchActive then
-                    track:AdjustSpeed(snapValue)
-                end
-            end
-        end
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        -- Apply the actual movement speed change here!
+        humanoid.WalkSpeed = 16 * snapValue
     end
 end
 
