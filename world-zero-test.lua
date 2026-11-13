@@ -1206,10 +1206,11 @@ if queue_on_teleport then
 	queue_on_teleport([[
 		repeat task.wait() until game:IsLoaded()
 		task.wait(2)
-		local url = "https://raw.githubusercontent.com/perpy08/RBXScripts/refs/heads/main/tests.lua"
+		local url = "https://raw.githubusercontent.com/perpy08/RBXScripts/main/world-zero-test.lua"
 		local ok, res = pcall(game.HttpGet, game, url)
 		if ok then
-			loadstring(res)()
+			local func = loadstring(res)
+			if func then func() end
 		end
 	]])
 end
