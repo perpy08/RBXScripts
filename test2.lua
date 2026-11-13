@@ -328,9 +328,9 @@ local function setupCharacter(character)
 		end
 	end)
 
-	-- air-jump bookkeeping: reset the moment we touch ground
-	janitor.connect(humanoid.StateChanged, function(_, newState)
-		if newState == Enum.HumanoidStateType.Landed then
+	-- air-jump bookkeeping: reset the moment we touch ground (FloorMaterial is more reliable than StateChanged)
+	janitor.connect(humanoid:GetPropertyChangedSignal("FloorMaterial"), function()
+		if humanoid.FloorMaterial ~= Enum.Material.Air then
 			airJumpsUsed = 0
 		end
 	end)
@@ -341,17 +341,20 @@ if LocalPlayer.Character then
 end
 RootJanitor.connect(LocalPlayer.CharacterAdded, setupCharacter)
 
--- MultiJump: one bonus jump while airborne
+-- MultiJump: reliable airborne jumping
 RootJanitor.connect(UserInputService.JumpRequest, function()
 	if not State.MultiJumpActive then return end
 	local humanoid = currentHumanoid
-	if not humanoid or humanoid.Parent == nil or humanoid.Health <= 0 then return end
-	local state = humanoid:GetState()
-	local airborne = state == Enum.HumanoidStateType.Freefall
-		or state == Enum.HumanoidStateType.Jumping
-	if airborne and airJumpsUsed < Config.MaxAirJumps then
-		airJumpsUsed += 1
-		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+	if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
+	
+	-- Check if we are truly airborne
+	if humanoid.FloorMaterial == Enum.Material.Air then
+		if airJumpsUsed < Config.MaxAirJumps then
+			airJumpsUsed += 1
+			-- Force the jump state directly
+			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+			humanoid.Jump = true
+		end
 	end
 end)
 
@@ -738,7 +741,7 @@ new("TextLabel", {
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
 	TextColor3 = THEME.dim,
-	Text = "RightShift toggle · x unload",
+	Text = "ALT/RShift toggle · x unload",
 }, content)
 
 -- dragging -----------------------------------------------------------------
@@ -787,7 +790,7 @@ end)
 
 RootJanitor.connect(UserInputService.InputBegan, function(input, gameProcessed)
 	if gameProcessed then return end
-	if input.KeyCode == Config.ToggleKey then
+	if input.KeyCode == Config.ToggleKey or input.KeyCode == Enum.KeyCode.LeftAlt or input.KeyCode == Enum.KeyCode.RightAlt then
 		panel.Visible = not panel.Visible
 	end
 end)
