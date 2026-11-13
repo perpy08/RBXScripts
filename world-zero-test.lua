@@ -490,24 +490,28 @@ local WZRunning = { autofarm = false }
 
 -- World//Zero class attack tables
 local WZClasses = {
-	["Swordmaster"]  = {"Swordmaster1","Swordmaster2","Swordmaster3","Swordmaster4","Swordmaster5","Swordmaster6","CrescentStrike1","CrescentStrike2","CrescentStrike3"},
-	["Mage"]         = {"Mage1","ArcaneBlastAOE","ArcaneBlast","ArcaneWave1","ArcaneWave2","ArcaneWave3"},
-	["Defender"]     = {"Defender1","Defender2","Defender3","Defender4","Defender5","Groundbreaker","Spin1","Spin2"},
-	["DualWielder"]  = {"DualWield1","DualWield2","DualWield3","DualWield4","DualWield5","DualWield6","DashStrike","CrossSlash1","CrossSlash2"},
-	["Guardian"]     = {"Guardian1","Guardian2","Guardian3","Guardian4","SlashFury1","SlashFury2","SlashFury3","RockSpikes1"},
-	["IcefireMage"]  = {"IcefireMage1","IcySpikes1","IcySpikes2","IcefireMageFireballBlast","LightningStrike1","LightningStrike2"},
-	["Berserker"]    = {"Berserker1","Berserker2","Berserker3","Berserker4","AggroSlam","GigaSpin1","GigaSpin2","Fissure1","FissureErupt1"},
-	["Paladin"]      = {"Paladin1","Paladin2","Paladin3","Paladin4","LightThrust1","LightThrust2","LightPaladin1"},
-	["Demon"]        = {"Demon1","Demon4","Demon7","DemonDPS1","DemonDPS2","DemonDPS3","ScytheThrowDPS1","DemonLifeStealDPS"},
-	["Dragoon"]      = {"Dragoon1","Dragoon2","Dragoon3","Dragoon4","DragoonDash","DragoonCross1","MultiStrike1","MultiStrike2"},
-	["Archer"]       = {"Archer","PiercingArrow1","PiercingArrow2","PiercingArrow3","SpiritBomb","MortarStrike1","HeavenlySword1"},
+	["Swordmaster"] = {"Swordmaster1","Swordmaster2","Swordmaster3","Swordmaster4","Swordmaster5","Swordmaster6","CrescentStrike1","CrescentStrike2","CrescentStrike3","Leap"},
+	["Mage"] = {"Mage1","ArcaneBlastAOE","ArcaneBlast","ArcaneWave1","ArcaneWave2","ArcaneWave3","ArcaneWave4","ArcaneWave5","ArcaneWave6","ArcaneWave7","ArcaneWave8","ArcaneWave9"},
+	["Defender"] = {"Defender1","Defender2","Defender3","Defender4","Defender5","Groundbreaker","Spin1","Spin2","Spin3","Spin4","Spin5"},
+	["DualWielder"] = {"DualWield1","DualWield2","DualWield3","DualWield4","DualWield5","DualWield6","DualWield7","DualWield8","DualWield9","DualWield10","DashStrike","CrossSlash1","CrossSlash2","CrossSlash3","CrossSlash4"},
+	["Guardian"] = {"Guardian1","Guardian2","Guardian3","Guardian4","SlashFury1","SlashFury2","SlashFury3","SlashFury4","SlashFury5","SlashFury6","SlashFury7","SlashFury8","SlashFury9","SlashFury10","SlashFury11","SlashFury12","SlashFury13","RockSpikes1","RockSpikes2","RockSpikes3"},
+	["IcefireMage"] = {"IcefireMage1","IcySpikes1","IcySpikes2","IcySpikes3","IcySpikes4","IcefireMageFireballBlast","IcefireMageFireball","LightningStrike1","LightningStrike2","LightningStrike3","LightningStrike4","LightningStrike5","IcefireMageUltimateFrost","IcefireMageUltimateMeteor1"},
+	["Berserker"] = {"Berserker1","Berserker2","Berserker3","Berserker4","Berserker5","Berserker6","AggroSlam","GigaSpin1","GigaSpin2","GigaSpin3","GigaSpin4","GigaSpin5","GigaSpin6","GigaSpin7","GigaSpin8","Fissure1","Fissure2","FissureErupt1","FissureErupt2","FissureErupt3","FissureErupt4","FissureErupt5"},
+	["Paladin"] = {"Paladin1","Paladin2","Paladin3","Paladin4","LightThrust1","LightThrust2","LightPaladin1","LightPaladin2"},
+	["MageOfLight"] = {"MageOfLight","MageOfLightBlast"},
+	["Demon"] = {"Demon1","Demon4","Demon7","Demon10","Demon13","Demon16","Demon19","Demon22","Demon25","DemonDPS1","DemonDPS2","DemonDPS3","DemonDPS4","DemonDPS5","DemonDPS6","DemonDPS7","DemonDPS8","DemonDPS9","ScytheThrowDPS1","ScytheThrowDPS2","ScytheThrowDPS3","DemonLifeStealDPS","DemonSoulDPS1","DemonSoulDPS2","DemonSoulDPS3"},
+	["Dragoon"] = {"Dragoon1","Dragoon2","Dragoon3","Dragoon4","Dragoon5","Dragoon6","Dragoon7","DragoonDash","DragoonCross1","DragoonCross2","DragoonCross3","DragoonCross4","DragoonCross5","DragoonCross6","DragoonCross7","DragoonCross8","DragoonCross9","DragoonCross10","MultiStrike1","MultiStrike2","MultiStrike3","MultiStrike4","MultiStrike5","MultiStrikeDragon1","MultiStrikeDragon2","MultiStrikeDragon3","DragoonFall"},
+	["Archer"] = {"Archer","PiercingArrow1","PiercingArrow2","PiercingArrow3","PiercingArrow4","PiercingArrow5","PiercingArrow6","PiercingArrow7","PiercingArrow8","PiercingArrow9","PiercingArrow10","SpiritBomb","MortarStrike1","MortarStrike2","MortarStrike3","MortarStrike4","MortarStrike5","MortarStrike6","MortarStrike7","HeavenlySword1","HeavenlySword2","HeavenlySword3","HeavenlySword4","HeavenlySword5","HeavenlySword6"},
 }
 
 local function getWZCombat()
 	local RS = game:GetService("ReplicatedStorage")
-	local ok, Combat = pcall(require, RS:FindFirstChild("Shared") and RS.Shared:FindFirstChild("Combat"))
+	local shared = RS:FindFirstChild("Shared")
+	if not shared then return nil end
+	local combatModule = shared:FindFirstChild("Combat")
+	if not combatModule then return nil end
+	local ok, Combat = pcall(require, combatModule)
 	if not ok or not Combat then return nil end
-	local GetEvent = pcall(function() return Combat:GetAttackEvent() end)
 	return Combat
 end
 
@@ -515,57 +519,183 @@ local function getWZClass()
 	local RS = game:GetService("ReplicatedStorage")
 	local cha = LocalPlayer.Character
 	if not cha then return nil end
+	local profiles = RS:FindFirstChild("Profiles")
+	if not profiles then return nil end
 	
-	-- 1. Try via LocalPlayer.Name
-	local ok, class = pcall(function() return RS.Profiles[LocalPlayer.Name].Class.Value end)
+	local ok, class = pcall(function() return profiles[LocalPlayer.Name].Class.Value end)
 	if ok and type(class) == "string" then return class end
-	
-	-- 2. Try via Character.Name
-	ok, class = pcall(function() return RS.Profiles[cha.Name].Class.Value end)
+	ok, class = pcall(function() return profiles[cha.Name].Class.Value end)
 	if ok and type(class) == "string" then return class end
-	
-	-- 3. Try to find the only profile (if player name doesn't match)
 	ok, class = pcall(function()
-		for _, profile in ipairs(RS.Profiles:GetChildren()) do
+		for _, profile in ipairs(profiles:GetChildren()) do
 			if profile:FindFirstChild("Class") and type(profile.Class.Value) == "string" then
 				return profile.Class.Value
 			end
 		end
 	end)
 	if ok and type(class) == "string" then return class end
-
-	-- 4. Check LocalPlayer Attributes
-	class = LocalPlayer:GetAttribute("Class") or (cha and cha:GetAttribute("Class"))
+	class = LocalPlayer:GetAttribute("Class") or cha:GetAttribute("Class")
 	if type(class) == "string" then return class end
-	
 	return nil
 end
 
-local function wzFireAttack(Combat, attackName)
+local function wzDisableChecks(Combat)
 	pcall(function()
-		local GetEvent = Combat:GetAttackEvent()
-		GetEvent:FireServer(attackName)
+		local ev = Combat:GetAttackEvent()
+		if not ev or ev:GetAttribute("ZG_Bypassed") then return end
+		for _, conn in ipairs(getconnections(ev.OnClientEvent)) do
+			pcall(function() conn:Disable() end)
+		end
+		ev:SetAttribute("ZG_Bypassed", true)
 	end)
 end
 
--- Auto-farm loop
+local function wzTouch(part)
+	if not part then return end
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+	if firetouchinterest then
+		pcall(function()
+			firetouchinterest(root, part, 0)
+			task.wait(0.05)
+			firetouchinterest(root, part, 1)
+		end)
+	else
+		pcall(function() root.CFrame = part.CFrame end)
+	end
+end
+
+local function wzMoveTo(cf)
+	local char = LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+	char:PivotTo(cf)
+end
+
+local function wzNearestMob()
+	local mobsFolder = workspace:FindFirstChild("Mobs")
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not mobsFolder or not root then return {}, {}, nil end
+	local mobList, posList, nearest, nearestDist = {}, {}, nil, math.huge
+	for _, mob in ipairs(mobsFolder:GetChildren()) do
+		local collider = mob:FindFirstChild("Collider") or mob.PrimaryPart
+		local hpObj = mob:FindFirstChild("HealthProperties")
+		local hpVal = hpObj and hpObj:FindFirstChild("Health")
+		if collider and hpVal and hpVal.Value > 0 then
+			table.insert(mobList, mob)
+			table.insert(posList, root.Position)
+			local dist = (collider.Position - root.Position).Magnitude
+			if dist < nearestDist then
+				nearestDist = dist
+				nearest = mob
+			end
+		end
+	end
+	return mobList, posList, nearest
+end
+
+local function wzHandleMissionObjects()
+	local mission = workspace:FindFirstChild("MissionObjects")
+	local acted = false
+	if mission then
+		for _, v in ipairs(mission:GetChildren()) do
+			if v.Name == "MissionStart" and v:IsA("Model") and v.PrimaryPart then
+				pcall(function() v.PrimaryPart.CanCollide = false end)
+				wzMoveTo(v.PrimaryPart.CFrame)
+				acted = true
+			elseif v.Name == "MinibossExit" and v:IsA("BasePart") then
+				pcall(function() v.CanCollide = false end)
+				wzTouch(v)
+				acted = true
+			elseif v:IsA("BasePart") and v:FindFirstChild("TouchInterest") then
+				pcall(function() v.CanCollide = false end)
+				wzTouch(v)
+				acted = true
+			end
+		end
+	end
+
+	-- chest vacuum
+	for _, v in ipairs(workspace:GetChildren()) do
+		if v:IsA("Model") and string.find(v.Name:lower(), "chest") and v.PrimaryPart then
+			pcall(function()
+				v.PrimaryPart.CanCollide = false
+				v:PivotTo((LocalPlayer.Character and LocalPlayer.Character:GetPivot()) or v.PrimaryPart.CFrame)
+			end)
+			acted = true
+		end
+	end
+	return acted
+end
+
+local function wzMoveTowardProgress()
+	local mission = workspace:FindFirstChild("MissionObjects")
+	if mission and mission:FindFirstChild("WaveStarter") then
+		local ws = mission.WaveStarter
+		if ws:IsA("BasePart") then
+			wzMoveTo(ws.CFrame * CFrame.new(0, 3, 0))
+			return true
+		end
+	end
+	local map = workspace:FindFirstChild("Map")
+	if map then
+		for _, a in ipairs(map:GetDescendants()) do
+			if a:IsA("BasePart") and a.Name == "Spawn" then
+				wzMoveTo(a.CFrame * CFrame.new(0, 8, 0))
+				return true
+			end
+			if a.Name == "BoundingBox" and a:IsA("BasePart") then
+				wzTouch(a)
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function wzAttackTargets(Combat, class, attacks, mobList, posList)
+	if not Combat or not class or not attacks or #mobList == 0 then return end
+	if class == "DualWielder" then
+		pcall(function()
+			game:GetService("ReplicatedStorage").Shared.Combat.Skillsets.DualWielder.AttackBuff:FireServer()
+		end)
+	end
+	local delayPerHit = (class == "Berserker") and 0.2 or 0.12
+	for _, atk in ipairs(attacks) do
+		if not WZState.AutoFarmActive or not Runtime.alive then break end
+		pcall(function()
+			Combat.AttackTargets(nil, mobList, posList, atk)
+		end)
+		task.wait(delayPerHit)
+	end
+end
+
+-- Auto-farm loop: move + mission + attack
 task.spawn(function()
 	while Runtime.alive do
-		if WZState.AutoFarmActive then
+		if not WZState.AutoFarmActive then
+			task.wait(0.25)
+		else
 			local Combat = getWZCombat()
 			local class  = getWZClass()
 			local attacks = class and WZClasses[class]
-			if Combat and attacks then
-				for _, atk in ipairs(attacks) do
-					if not WZState.AutoFarmActive or not Runtime.alive then break end
-					wzFireAttack(Combat, atk)
-					task.wait(0.1)
+			if Combat and class and attacks then
+				wzDisableChecks(Combat)
+				local mobs, positions, nearest = wzNearestMob()
+				if nearest then
+					local collider = nearest:FindFirstChild("Collider") or nearest.PrimaryPart
+					if collider then
+						wzMoveTo(collider.CFrame * CFrame.new(0, 8, 0))
+					end
+					wzAttackTargets(Combat, class, attacks, mobs, positions)
+				else
+					local acted = wzHandleMissionObjects()
+					if not acted then wzMoveTowardProgress() end
+					task.wait(0.2)
 				end
 			else
 				task.wait(1)
 			end
-		else
-			task.wait(0.25)
 		end
 	end
 end)
