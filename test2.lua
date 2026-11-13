@@ -359,13 +359,35 @@ if LocalPlayer.Character then
 end
 RootJanitor.connect(LocalPlayer.CharacterAdded, setupCharacter)
 
--- MultiJump: Simple Force-State implementation (matches original working tests.lua logic)
-RootJanitor.connect(UserInputService.JumpRequest, function()
-	if State.MultiJumpActive then
-		local character = LocalPlayer.Character
-		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-		if humanoid and humanoid.Health > 0 then
-			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+-- MultiJump: Held-Space flight + soft land (exact original tests.lua logic)
+RootJanitor.connect(RunService.Heartbeat, function()
+	if not State.MultiJumpActive then return end
+
+	local char = LocalPlayer.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not rootPart then return end
+
+	-- Hold Space to fly / stay airborne
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+		rootPart.AssemblyLinearVelocity = Vector3.new(
+			rootPart.AssemblyLinearVelocity.X,
+			humanoid.JumpPower * 0.8,
+			rootPart.AssemblyLinearVelocity.Z
+		)
+	end
+
+	-- Soft-land cushion when falling fast near the ground
+	if rootPart.AssemblyLinearVelocity.Y < -40 then
+		local rayOrigin = rootPart.Position
+		local rayDir   = Vector3.new(0, -15, 0)
+		local result   = workspace:Raycast(rayOrigin, rayDir, RaycastParams.new())
+		if result then
+			rootPart.AssemblyLinearVelocity = Vector3.new(
+				rootPart.AssemblyLinearVelocity.X,
+				-2,
+				rootPart.AssemblyLinearVelocity.Z
+			)
 		end
 	end
 end)
