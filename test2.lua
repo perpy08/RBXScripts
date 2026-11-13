@@ -685,13 +685,18 @@ local function updateStepperVisuals()
 	for id, ui in pairs(stepperRegistry) do
 		local isActive = (State.SpeedMode:lower() == id)
 		local trans = isActive and 0 or 0.6
-		ui.row.GroupTransparency = trans -- Note: Requires CanvasGroup, but we'll use manual for vanilla
+		
+		-- Row opacity via manual child dimming (GroupTransparency fails on standard Frames)
 		ui.title.TextTransparency = trans
 		ui.val.TextTransparency = trans
-		ui.minus.BackgroundTransparency = trans + (isActive and 0 or 0.2)
+		ui.minus.BackgroundTransparency = math.min(1, 0.45 + trans)
 		ui.minus.TextTransparency = trans
-		ui.plus.BackgroundTransparency = trans + (isActive and 0 or 0.2)
+		ui.plus.BackgroundTransparency = math.min(1, 0.45 + trans)
 		ui.plus.TextTransparency = trans
+		
+		-- Disable interactions for inactive steppers
+		ui.minus.Active = isActive
+		ui.plus.Active = isActive
 	end
 end
 
@@ -733,7 +738,7 @@ new("TextLabel", {
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
 	TextColor3 = THEME.dim,
-	Text = "ALT/RShift toggle · x unload",
+	Text = "RightShift toggle · x unload",
 }, content)
 
 -- dragging -----------------------------------------------------------------
@@ -782,7 +787,7 @@ end)
 
 RootJanitor.connect(UserInputService.InputBegan, function(input, gameProcessed)
 	if gameProcessed then return end
-	if input.KeyCode == Config.ToggleKey or input.KeyCode == Enum.KeyCode.LeftAlt or input.KeyCode == Enum.KeyCode.RightAlt then
+	if input.KeyCode == Config.ToggleKey then
 		panel.Visible = not panel.Visible
 	end
 end)
