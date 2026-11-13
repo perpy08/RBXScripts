@@ -499,7 +499,7 @@ local WZClasses = {
 	["Berserker"] = {"Berserker1","Berserker2","Berserker3","Berserker4","Berserker5","Berserker6","AggroSlam","GigaSpin1","GigaSpin2","GigaSpin3","GigaSpin4","GigaSpin5","GigaSpin6","GigaSpin7","GigaSpin8","Fissure1","Fissure2","FissureErupt1","FissureErupt2","FissureErupt3","FissureErupt4","FissureErupt5"},
 	["Paladin"] = {"Paladin1","Paladin2","Paladin3","Paladin4","LightThrust1","LightThrust2","LightPaladin1","LightPaladin2"},
 	["MageOfLight"] = {"MageOfLight","MageOfLightBlast"},
-	["Demon"] = {"Demon1","Demon4","Demon7","Demon10","Demon13","Demon16","Demon19","Demon22","Demon25","DemonDPS1","DemonDPS2","DemonDPS3","DemonDPS4","DemonDPS5","DemonDPS6","DemonDPS7","DemonDPS8","DemonDPS9","ScytheThrowDPS1","ScytheThrowDPS2","ScytheThrowDPS3","DemonLifeStealDPS","DemonSoulDPS1","DemonSoulDPS2","DemonSoulDPS3"},
+	["Demon"] = {"Demon1", "Demon4", "Demon7", "Demon10", "Demon13", "Demon16", "Demon19", "Demon22", "Demon25", "DemonDPS1", "DemonDPS2", "DemonDPS3", "DemonDPS4", "DemonDPS5", "DemonDPS6", "DemonDPS7", "DemonDPS8", "DemonDPS9", "ScytheThrowDPS1", "ScytheThrowDPS2", "ScytheThrowDPS3", "DemonLifeStealDPS", "DemonSoulDPS1", "DemonSoulDPS2", "DemonSoulDPS3"},
 	["Dragoon"] = {"Dragoon1","Dragoon2","Dragoon3","Dragoon4","Dragoon5","Dragoon6","Dragoon7","DragoonDash","DragoonCross1","DragoonCross2","DragoonCross3","DragoonCross4","DragoonCross5","DragoonCross6","DragoonCross7","DragoonCross8","DragoonCross9","DragoonCross10","MultiStrike1","MultiStrike2","MultiStrike3","MultiStrike4","MultiStrike5","MultiStrikeDragon1","MultiStrikeDragon2","MultiStrikeDragon3","DragoonFall"},
 	["Archer"] = {"Archer","PiercingArrow1","PiercingArrow2","PiercingArrow3","PiercingArrow4","PiercingArrow5","PiercingArrow6","PiercingArrow7","PiercingArrow8","PiercingArrow9","PiercingArrow10","SpiritBomb","MortarStrike1","MortarStrike2","MortarStrike3","MortarStrike4","MortarStrike5","MortarStrike6","MortarStrike7","HeavenlySword1","HeavenlySword2","HeavenlySword3","HeavenlySword4","HeavenlySword5","HeavenlySword6"},
 }
@@ -517,26 +517,28 @@ end
 
 local function getWZClass()
 	local RS = game:GetService("ReplicatedStorage")
-	local cha = LocalPlayer.Character
-	if not cha then return nil end
 	local profiles = RS:FindFirstChild("Profiles")
 	if not profiles then return nil end
 	
-	local ok, class = pcall(function() return profiles[LocalPlayer.Name].Class.Value end)
-	if ok and type(class) == "string" then return class end
-	ok, class = pcall(function() return profiles[cha.Name].Class.Value end)
-	if ok and type(class) == "string" then return class end
-	ok, class = pcall(function()
-		for _, profile in ipairs(profiles:GetChildren()) do
-			if profile:FindFirstChild("Class") and type(profile.Class.Value) == "string" then
-				return profile.Class.Value
-			end
+	-- Deep scan for any profile belonging to us
+	local possibleNames = {LocalPlayer.Name, LocalPlayer.DisplayName}
+	if LocalPlayer.Character then table.insert(possibleNames, LocalPlayer.Character.Name) end
+	
+	for _, name in ipairs(possibleNames) do
+		local p = profiles:FindFirstChild(name)
+		if p and p:FindFirstChild("Class") then
+			return p.Class.Value
 		end
-	end)
-	if ok and type(class) == "string" then return class end
-	class = LocalPlayer:GetAttribute("Class") or cha:GetAttribute("Class")
-	if type(class) == "string" then return class end
-	return nil
+	end
+	
+	-- Extreme fallback: search all profiles for the one that likely belongs to us
+	for _, p in ipairs(profiles:GetChildren()) do
+		if p:FindFirstChild("Class") then
+			return p.Class.Value -- Usually only 1 profile exists in local view
+		end
+	end
+	
+	return LocalPlayer:GetAttribute("Class")
 end
 
 local function wzDisableChecks(Combat)
@@ -1202,10 +1204,13 @@ PanelGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 -- auto-reload across teleports (Dungeons/Lobby)
 if queue_on_teleport then
 	queue_on_teleport([[
-		task.wait(1.5)
-		pcall(function()
-			loadstring(game:HttpGet("https://raw.githubusercontent.com/perpy08/RBXScripts/refs/heads/main/tests.lua"))()
-		end)
+		repeat task.wait() until game:IsLoaded()
+		task.wait(2)
+		local url = "https://raw.githubusercontent.com/perpy08/RBXScripts/refs/heads/main/tests.lua"
+		local ok, res = pcall(game.HttpGet, game, url)
+		if ok then
+			loadstring(res)()
+		end
 	]])
 end
 
