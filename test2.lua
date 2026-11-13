@@ -29,8 +29,7 @@ local Config = {
 	MinSpeedMultiplier = 0.1,
 	MaxSpeedMultiplier = 5,
 	MaxAirJumps        = 1,
-	BuyStepDelay       = 0.35, -- pause between each bomb purchase
-	BuyCycleDelay      = 2.5,  -- pause between full sweeps
+	JumpCooldown       = 0.15, -- seconds after jump before air-jump is allowed
 	GhostFrameTime     = 0.33, -- seconds between ghost snapshots
 	GhostLifetime      = 0.35,
 	AnimSkipBase       = 0.15,
@@ -46,6 +45,7 @@ local State = {
 	GlitchActive           = false,
 	CurrentSpeedMultiplier = 1.0,
 	SlowSpeedMultiplier    = 1.0,
+	AttackSpeedMultiplier  = 1.0,
 	SpeedMode              = "Fast", -- "Fast" | "Slow"
 }
 
@@ -268,10 +268,13 @@ RootJanitor.connect(RunService.Heartbeat, function()
 end)
 
 -- =====================================================================
---  4 · CHARACTER MANAGER  (speed / ragdoll / damage / multijump)
+--  4 · CHARACTER MANAGER  (speed / multijump / attack speed)
 -- =====================================================================
 local currentHumanoid = nil
-local airJumpsUsed = 0
+
+-- MultiJump state
+local canDoubleJump = false
+local hasDoubleJumped = false
 
 local function targetWalkSpeed(humanoid)
 	local base = humanoid:GetAttribute("ZenBaseSpeed") or Config.BaseWalkSpeed
@@ -286,6 +289,29 @@ local function refreshSpeed(humanoid)
 	end
 end
 
+-- Attack speed: identify non-locomotion animations and adjust their speed
+local MOVE_ANIM_NAMES = {
+	["walk"] = true, ["run"] = true, ["idle"] = true, ["jump"] = true,
+	["fall"] = true, ["climb"] = true, ["swim"] = true, ["sit"] = true,
+}
+
+local function isAttackAnimation(track)
+	-- Locomotion anims have priority 0 (Core) by default
+	-- Attack/tool anims are typically priority Action (400) or higher
+	if track.Priority == Enum.AnimationPriority.Action
+		or track.Priority == Enum.AnimationPriority.Action2
+		or track.Priority == Enum.AnimationPriority.Action3
+		or track.Priority == Enum.AnimationPriority.Action4 then
+		return true
+	end
+	-- Fallback: check name (some games set custom priorities)
+	local name = track.Name:lower()
+	if MOVE_ANIM_NAMES[name] then return false end
+	-- If it's short (< 3s) and not a movement anim, likely an attack
+	if track.Length > 0 and track.Length < 3 then return true end
+	return false
+end
+
 local function setupCharacter(character)
 	local janitor = newJanitor()
 	RootJanitor.add(janitor)
@@ -298,7 +324,8 @@ local function setupCharacter(character)
 	end
 
 	currentHumanoid = humanoid
-	airJumpsUsed = 0
+	canDoubleJump = false
+	hasDoubleJumped = false
 
 	-- remember the speed the game actually gave us — no magic 16
 	if not humanoid:GetAttribute("ZenBaseSpeed") then
@@ -314,6 +341,18 @@ local function setupCharacter(character)
 	local animator = humanoid:FindFirstChildOfClass("Animator")
 	if animator then
 		watchAnimations(animator, janitor)
+
+		-- Attack speed: hook into AnimationPlayed to adjust speed of combat anims
+		janitor.connect(animator.AnimationPlayed, function(track)
+			if State.AttackSpeedMultiplier ~= 1.0 and isAttackAnimation(track) then
+				-- AdjustSpeed must be called AFTER Play (which AnimationPlayed fires after)
+				task.defer(function()
+					if track.IsPlaying then
+						track:AdjustSpeed(State.AttackSpeedMultiplier)
+					end
+				end)
+			end
+		end)
 	end
 
 	-- speed enforcement with a re-entrancy guard (no signal storms)
@@ -328,10 +367,20 @@ local function setupCharacter(character)
 		end
 	end)
 
-	-- air-jump bookkeeping: reset the moment we touch ground (FloorMaterial is more reliable than StateChanged)
-	janitor.connect(humanoid:GetPropertyChangedSignal("FloorMaterial"), function()
-		if humanoid.FloorMaterial ~= Enum.Material.Air then
-			airJumpsUsed = 0
+	-- MultiJump state machine via StateChanged (proven reliable pattern)
+	janitor.connect(humanoid.StateChanged, function(_, newState)
+		if newState == Enum.HumanoidStateType.Landed then
+			canDoubleJump = false
+			hasDoubleJumped = false
+		elseif newState == Enum.HumanoidStateType.Freefall then
+			-- Small delay so JumpRequest from the ground jump doesn't consume the air jump
+			task.delay(Config.JumpCooldown, function()
+				if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
+					canDoubleJump = true
+				end
+			end)
+		elseif newState == Enum.HumanoidStateType.Jumping then
+			canDoubleJump = false
 		end
 	end)
 end
@@ -341,20 +390,16 @@ if LocalPlayer.Character then
 end
 RootJanitor.connect(LocalPlayer.CharacterAdded, setupCharacter)
 
--- MultiJump: reliable airborne jumping
+-- MultiJump: one bonus jump while airborne (classic DevForum pattern)
 RootJanitor.connect(UserInputService.JumpRequest, function()
 	if not State.MultiJumpActive then return end
 	local humanoid = currentHumanoid
 	if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
 	
-	-- Check if we are truly airborne
-	if humanoid.FloorMaterial == Enum.Material.Air then
-		if airJumpsUsed < Config.MaxAirJumps then
-			airJumpsUsed += 1
-			-- Force the jump state directly
-			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-			humanoid.Jump = true
-		end
+	if canDoubleJump and not hasDoubleJumped then
+		hasDoubleJumped = true
+		canDoubleJump = false
+		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 	end
 end)
 
@@ -642,13 +687,17 @@ local function addStepper(label, id, get, set, minV, maxV, step)
 	}, controlGroup)
 
 	local function bump(dir)
-		local currentMode = (id == "fast" and "Fast" or "Slow")
-		if State.SpeedMode ~= currentMode then return end
+		-- Speed steppers are mode-locked; attack speed is always available
+		if id == "fast" and State.SpeedMode ~= "Fast" then return end
+		if id == "slow" and State.SpeedMode ~= "Slow" then return end
 		
 		local v = math.clamp(math.floor((get() + dir * step) * 100 + 0.5) / 100, minV, maxV)
 		set(v)
 		value.Text = string.format("%.2fx", v)
-		if currentHumanoid then refreshSpeed(currentHumanoid) end
+		-- Only refresh walk speed for movement steppers
+		if (id == "fast" or id == "slow") and currentHumanoid then
+			refreshSpeed(currentHumanoid)
+		end
 	end
 
 	local minus = new("TextButton", {
@@ -686,10 +735,11 @@ end
 
 local function updateStepperVisuals()
 	for id, ui in pairs(stepperRegistry) do
-		local isActive = (State.SpeedMode:lower() == id)
+		-- Attack speed stepper is always active (not mode-dependent)
+		local isActive = (id == "atk") or (State.SpeedMode:lower() == id)
 		local trans = isActive and 0 or 0.6
 		
-		-- Row opacity via manual child dimming (GroupTransparency fails on standard Frames)
+		-- Row opacity via manual child dimming
 		ui.title.TextTransparency = trans
 		ui.val.TextTransparency = trans
 		ui.minus.BackgroundTransparency = math.min(1, 0.45 + trans)
@@ -729,6 +779,9 @@ modeBtn.MouseButton1Click:Connect(function()
 	if currentHumanoid then refreshSpeed(currentHumanoid) end
 end)
 updateStepperVisuals()
+
+addSectionLabel("combat")
+addStepper("attack speed", "atk", function() return State.AttackSpeedMultiplier end, function(v) State.AttackSpeedMultiplier = v end, 0.25, 5, 0.25)
 
 addSectionLabel("visuals")
 addToggle("player esp", function() return State.PlayerESPActive end, ESP.setEnabled)
