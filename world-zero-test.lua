@@ -1,4 +1,3 @@
-
 -- =====================================================================
 --  MINE A MOUNTAIN · UNIVERSAL AUTOMATION PANEL
 --  ZEN GLITCH v2.0 — refined build (LuaU · LocalScript)
@@ -516,10 +515,30 @@ local function getWZClass()
 	local RS = game:GetService("ReplicatedStorage")
 	local cha = LocalPlayer.Character
 	if not cha then return nil end
-	local ok, class = pcall(function()
-		return RS.Profiles[cha.Name].Class.Value
+	
+	-- 1. Try via LocalPlayer.Name
+	local ok, class = pcall(function() return RS.Profiles[LocalPlayer.Name].Class.Value end)
+	if ok and type(class) == "string" then return class end
+	
+	-- 2. Try via Character.Name
+	ok, class = pcall(function() return RS.Profiles[cha.Name].Class.Value end)
+	if ok and type(class) == "string" then return class end
+	
+	-- 3. Try to find the only profile (if player name doesn't match)
+	ok, class = pcall(function()
+		for _, profile in ipairs(RS.Profiles:GetChildren()) do
+			if profile:FindFirstChild("Class") and type(profile.Class.Value) == "string" then
+				return profile.Class.Value
+			end
+		end
 	end)
-	return ok and class or nil
+	if ok and type(class) == "string" then return class end
+
+	-- 4. Check LocalPlayer Attributes
+	class = LocalPlayer:GetAttribute("Class") or (cha and cha:GetAttribute("Class"))
+	if type(class) == "string" then return class end
+	
+	return nil
 end
 
 local function wzFireAttack(Combat, attackName)
@@ -1049,5 +1068,15 @@ end)
 -- boot ---------------------------------------------------------------------
 RootJanitor.add(PanelGui)
 PanelGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- auto-reload across teleports (Dungeons/Lobby)
+if queue_on_teleport then
+	queue_on_teleport([[
+		task.wait(1.5)
+		pcall(function()
+			loadstring(game:HttpGet("https://raw.githubusercontent.com/perpy08/RBXScripts/refs/heads/main/tests.lua"))()
+		end)
+	]])
+end
 
 print("[ZenGlitch] v2.0 loaded — RightShift toggles the panel")
