@@ -289,28 +289,29 @@ local function refreshSpeed(humanoid)
 	end
 end
 
--- Attack speed: identify non-locomotion animations and adjust their speed
-local MOVE_ANIM_NAMES = {
-	["walk"] = true, ["run"] = true, ["idle"] = true, ["jump"] = true,
-	["fall"] = true, ["climb"] = true, ["swim"] = true, ["sit"] = true,
+-- Core movement animation names (to exclude from attack speed buffs)
+local CORE_ANIMS = {
+	"walk", "run", "idle", "jump", "fall", "climb", "swim", "sit", "toolnone"
 }
 
-local function isAttackAnimation(track)
-	-- Locomotion anims have priority 0 (Core) by default
-	-- Attack/tool anims are typically priority Action (400) or higher
-	if track.Priority == Enum.AnimationPriority.Action
-		or track.Priority == Enum.AnimationPriority.Action2
-		or track.Priority == Enum.AnimationPriority.Action3
-		or track.Priority == Enum.AnimationPriority.Action4 then
-		return true
+local function applyAttackSpeed(track)
+	if State.AttackSpeedMultiplier == 1.0 then return end
+	local name = string.lower(track.Name)
+	for _, core in ipairs(CORE_ANIMS) do
+		if string.find(name, core) then return end
 	end
-	-- Fallback: check name (some games set custom priorities)
-	local name = track.Name:lower()
-	if MOVE_ANIM_NAMES[name] then return false end
-	-- If it's short (< 3s) and not a movement anim, likely an attack
-	if track.Length > 0 and track.Length < 3 then return true end
-	return false
+	
+	-- Wait one frame to ensure Roblox has initialized length/priority/playstate
+	task.spawn(function()
+		task.wait()
+		if track.IsPlaying then
+			track:AdjustSpeed(State.AttackSpeedMultiplier)
+		end
+	end)
 end
+
+local airJumpsUsed = 0
+local lastJumpTime = 0
 
 local function setupCharacter(character)
 	local janitor = newJanitor()
@@ -324,8 +325,7 @@ local function setupCharacter(character)
 	end
 
 	currentHumanoid = humanoid
-	canDoubleJump = false
-	hasDoubleJumped = false
+	airJumpsUsed = 0
 
 	-- remember the speed the game actually gave us — no magic 16
 	if not humanoid:GetAttribute("ZenBaseSpeed") then
@@ -341,18 +341,7 @@ local function setupCharacter(character)
 	local animator = humanoid:FindFirstChildOfClass("Animator")
 	if animator then
 		watchAnimations(animator, janitor)
-
-		-- Attack speed: hook into AnimationPlayed to adjust speed of combat anims
-		janitor.connect(animator.AnimationPlayed, function(track)
-			if State.AttackSpeedMultiplier ~= 1.0 and isAttackAnimation(track) then
-				-- AdjustSpeed must be called AFTER Play (which AnimationPlayed fires after)
-				task.defer(function()
-					if track.IsPlaying then
-						track:AdjustSpeed(State.AttackSpeedMultiplier)
-					end
-				end)
-			end
-		end)
+		janitor.connect(animator.AnimationPlayed, applyAttackSpeed)
 	end
 
 	-- speed enforcement with a re-entrancy guard (no signal storms)
@@ -367,20 +356,10 @@ local function setupCharacter(character)
 		end
 	end)
 
-	-- MultiJump state machine via StateChanged (proven reliable pattern)
-	janitor.connect(humanoid.StateChanged, function(_, newState)
-		if newState == Enum.HumanoidStateType.Landed then
-			canDoubleJump = false
-			hasDoubleJumped = false
-		elseif newState == Enum.HumanoidStateType.Freefall then
-			-- Small delay so JumpRequest from the ground jump doesn't consume the air jump
-			task.delay(Config.JumpCooldown, function()
-				if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
-					canDoubleJump = true
-				end
-			end)
-		elseif newState == Enum.HumanoidStateType.Jumping then
-			canDoubleJump = false
+	-- Bulletproof ground detection for jump resets
+	janitor.connect(humanoid:GetPropertyChangedSignal("FloorMaterial"), function()
+		if humanoid.FloorMaterial ~= Enum.Material.Air then
+			airJumpsUsed = 0
 		end
 	end)
 end
@@ -390,16 +369,31 @@ if LocalPlayer.Character then
 end
 RootJanitor.connect(LocalPlayer.CharacterAdded, setupCharacter)
 
--- MultiJump: one bonus jump while airborne (classic DevForum pattern)
+-- MultiJump: Direct physics override for maximum reliability
 RootJanitor.connect(UserInputService.JumpRequest, function()
 	if not State.MultiJumpActive then return end
 	local humanoid = currentHumanoid
 	if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
 	
-	if canDoubleJump and not hasDoubleJumped then
-		hasDoubleJumped = true
-		canDoubleJump = false
-		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+	local now = os.clock()
+	if now - lastJumpTime < 0.2 then return end -- Prevent double-firing on one keypress
+	
+	local state = humanoid:GetState()
+	-- If they are falling or jumping, they are in the air
+	if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+		if airJumpsUsed < Config.MaxAirJumps then
+			airJumpsUsed += 1
+			lastJumpTime = now
+			
+			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+			
+			-- Force vertical velocity to guarantee the jump happens regardless of Roblox limits
+			local root = humanoid.Parent:FindFirstChild("HumanoidRootPart")
+			if root then
+				local vel = root.AssemblyLinearVelocity
+				root.AssemblyLinearVelocity = Vector3.new(vel.X, humanoid.JumpPower or 50, vel.Z)
+			end
+		end
 	end
 end)
 
