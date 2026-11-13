@@ -301,17 +301,15 @@ local function applyAttackSpeed(track)
 		if string.find(name, core) then return end
 	end
 	
-	-- Wait one frame to ensure Roblox has initialized length/priority/playstate
+	-- Multi-stage speed enforcement to bypass Roblox internal resets
 	task.spawn(function()
+		track:AdjustSpeed(State.AttackSpeedMultiplier)
 		task.wait()
 		if track.IsPlaying then
 			track:AdjustSpeed(State.AttackSpeedMultiplier)
 		end
 	end)
 end
-
-local airJumpsUsed = 0
-local lastJumpTime = 0
 
 local function setupCharacter(character)
 	local janitor = newJanitor()
@@ -325,7 +323,6 @@ local function setupCharacter(character)
 	end
 
 	currentHumanoid = humanoid
-	airJumpsUsed = 0
 
 	-- remember the speed the game actually gave us — no magic 16
 	if not humanoid:GetAttribute("ZenBaseSpeed") then
@@ -333,18 +330,18 @@ local function setupCharacter(character)
 	end
 	refreshSpeed(humanoid)
 
-	-- self-clean on death / removal: nothing survives a respawn
+	-- self-clean on death / removal
 	janitor.connect(humanoid.Died, function() janitor.clean() end)
 	janitor.connect(character.Destroying, function() janitor.clean() end)
 
-	-- feed new animation tracks into the shared jitter registry
+	-- Animations: hook jitter and attack speed
 	local animator = humanoid:FindFirstChildOfClass("Animator")
 	if animator then
 		watchAnimations(animator, janitor)
 		janitor.connect(animator.AnimationPlayed, applyAttackSpeed)
 	end
 
-	-- speed enforcement with a re-entrancy guard (no signal storms)
+	-- speed enforcement
 	local applying = false
 	janitor.connect(humanoid:GetPropertyChangedSignal("WalkSpeed"), function()
 		if applying then return end
@@ -355,13 +352,6 @@ local function setupCharacter(character)
 			applying = false
 		end
 	end)
-
-	-- Bulletproof ground detection for jump resets
-	janitor.connect(humanoid:GetPropertyChangedSignal("FloorMaterial"), function()
-		if humanoid.FloorMaterial ~= Enum.Material.Air then
-			airJumpsUsed = 0
-		end
-	end)
 end
 
 if LocalPlayer.Character then
@@ -369,31 +359,29 @@ if LocalPlayer.Character then
 end
 RootJanitor.connect(LocalPlayer.CharacterAdded, setupCharacter)
 
--- MultiJump: Direct physics override for maximum reliability
+-- MultiJump: Simple Force-State implementation (matches original working tests.lua logic)
 RootJanitor.connect(UserInputService.JumpRequest, function()
-	if not State.MultiJumpActive then return end
-	local humanoid = currentHumanoid
-	if not humanoid or not humanoid.Parent or humanoid.Health <= 0 then return end
-	
-	local now = os.clock()
-	if now - lastJumpTime < 0.2 then return end -- Prevent double-firing on one keypress
-	
-	local state = humanoid:GetState()
-	-- If they are falling or jumping, they are in the air
-	if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
-		if airJumpsUsed < Config.MaxAirJumps then
-			airJumpsUsed += 1
-			lastJumpTime = now
-			
+	if State.MultiJumpActive then
+		local character = LocalPlayer.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.Health > 0 then
 			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-			
-			-- Force vertical velocity to guarantee the jump happens regardless of Roblox limits
-			local root = humanoid.Parent:FindFirstChild("HumanoidRootPart")
-			if root then
-				local vel = root.AssemblyLinearVelocity
-				root.AssemblyLinearVelocity = Vector3.new(vel.X, humanoid.JumpPower or 50, vel.Z)
+		end
+	end
+end)
+
+-- Periodically re-sync attack speed for already-playing tracks
+task.spawn(function()
+	while Runtime.alive do
+		if State.AttackSpeedMultiplier ~= 1.0 and currentHumanoid then
+			local animator = currentHumanoid:FindFirstChildOfClass("Animator")
+			if animator then
+				for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+					applyAttackSpeed(track)
+				end
 			end
 		end
+		task.wait(1)
 	end
 end)
 
