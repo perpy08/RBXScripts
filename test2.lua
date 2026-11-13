@@ -37,13 +37,10 @@ local Config = {
 	ToggleKey          = Enum.KeyCode.RightShift,
 }
 
--- State (same keys as v1 -> drop-in compatible) --------------------------
+-- State (Universal Refined Build) ---------------------------------------
 local State = {
-	AutoBuyActive          = false,
 	InstantInteractions    = false,
 	MultiJumpActive        = false,
-	NoRagdollActive        = false,
-	NoDamageActive         = false,
 	PlayerESPActive        = false,
 	KillGlowActive         = false,
 	GlitchActive           = false,
@@ -55,50 +52,39 @@ local State = {
 local Runtime = { alive = true }
 
 -- Tiny lifecycle helper ---------------------------------------------------
--- Collects connections / instances / sub-janitors, kills all on clean().
 local function newJanitor()
 	local items = {}
 	local janitor = {}
-
-	function janitor.add(item)
-		table.insert(items, item)
-		return item
-	end
-
+	function janitor.add(item) table.insert(items, item) return item end
 	function janitor.connect(signal, fn)
 		local conn = signal:Connect(fn)
 		table.insert(items, conn)
 		return conn
 	end
-
 	function janitor.clean()
 		for _, item in ipairs(items) do
-			if typeof(item) == "RBXScriptConnection" then
-				item:Disconnect()
-			elseif typeof(item) == "Instance" then
-				item:Destroy()
-			elseif type(item) == "table" and item.clean then
-				item.clean()
-			end
+			if typeof(item) == "RBXScriptConnection" then item:Disconnect()
+			elseif typeof(item) == "Instance" then item:Destroy()
+			elseif type(item) == "table" and item.clean then item.clean() end
 		end
 		table.clear(items)
 	end
-
 	return janitor
 end
 
 local RootJanitor = newJanitor()
-
--- Re-run guard: wipe a previous execution before booting again.
-if _G.__ZenGlitchJanitor then
-	pcall(function() _G.__ZenGlitchJanitor.clean() end)
-end
+if _G.__ZenGlitchJanitor then pcall(function() _G.__ZenGlitchJanitor.clean() end) end
 _G.__ZenGlitchJanitor = RootJanitor
-
 RootJanitor.add({ clean = function() Runtime.alive = false end })
 
 local function activeMultiplier()
-	return (State.SpeedMode == "Fast") and State.CurrentSpeedMultiplier or State.SlowSpeedMultiplier
+	if State.SpeedMode == "Fast" then
+		return State.CurrentSpeedMultiplier
+	else
+		-- In Slow Mode, speed = Base / Multiplier
+		-- If Mult = 1.0, returns 1.0. If Mult = 2.0, returns 0.5 (half speed)
+		return 1 / math.max(State.SlowSpeedMultiplier, 0.01)
+	end
 end
 
 -- =====================================================================
@@ -168,68 +154,7 @@ end
 RootJanitor.connect(Players.PlayerAdded, watchPlayer)
 
 -- =====================================================================
---  2 · AUTOBUY  (lazy remote resolution, fail-fast, log-once)
--- =====================================================================
-local BOMB_STOCK = { "Classic Bomb", "Wind Bomb", "Ice Bomb", "Fire Bomb", "Thunder Bomb" }
-
-local cachedRemote = nil
-local function resolveBuyRemote()
-	if cachedRemote and cachedRemote.Parent then
-		return cachedRemote
-	end
-	local folders = {
-		ReplicatedStorage:FindFirstChild("Remotes"),
-		ReplicatedStorage:FindFirstChild("Events"),
-		ReplicatedStorage,
-	}
-	cachedRemote = nil
-	for _, folder in ipairs(folders) do
-		if folder then
-			cachedRemote = folder:FindFirstChild("BuyBomb") or folder:FindFirstChild("PurchaseBomb")
-			if cachedRemote then return cachedRemote end
-		end
-	end
-	return nil
-end
-
-local buyWarnedMissing = false
-task.spawn(function()
-	while Runtime.alive do
-		if State.AutoBuyActive then
-			local remote = resolveBuyRemote()
-			if remote then
-				for _, bombName in ipairs(BOMB_STOCK) do
-					if not State.AutoBuyActive or not Runtime.alive then break end
-					local ok, err = pcall(function()
-						if remote:IsA("RemoteFunction") then
-							remote:InvokeServer(bombName)
-						else
-							remote:FireServer(bombName)
-						end
-					end)
-					if not ok then
-						warn(("[AutoBuy] purchase failed for %s: %s"):format(bombName, tostring(err)))
-						break -- stop hammering a rejecting remote
-					end
-					task.wait(Config.BuyStepDelay)
-				end
-				task.wait(Config.BuyCycleDelay)
-			else
-				if not buyWarnedMissing then
-					buyWarnedMissing = true
-					warn("[AutoBuy] no BuyBomb/PurchaseBomb remote found — will retry while the toggle stays on")
-				end
-				task.wait(1)
-			end
-		else
-			buyWarnedMissing = false
-			task.wait(0.25) -- responsive toggle, near-zero idle cost
-		end
-	end
-end)
-
--- =====================================================================
---  3 · GLITCH ENGINE  (ghost trail + animation jitter, one shared loop)
+--  2 · GLITCH ENGINE  (ghost trail + animation jitter, one shared loop)
 -- =====================================================================
 local Ghost = { lastTick = 0 }
 
@@ -400,20 +325,6 @@ local function setupCharacter(character)
 			applying = true
 			humanoid.WalkSpeed = target
 			applying = false
-		end
-	end)
-
-	-- ragdoll suppression
-	janitor.connect(humanoid:GetPropertyChangedSignal("PlatformStand"), function()
-		if State.NoRagdollActive and humanoid.PlatformStand then
-			humanoid.PlatformStand = false
-		end
-	end)
-
-	-- damage lock
-	janitor.connect(humanoid.HealthChanged, function(health)
-		if State.NoDamageActive and health < humanoid.MaxHealth then
-			humanoid.Health = humanoid.MaxHealth
 		end
 	end)
 
@@ -688,15 +599,18 @@ local function addToggle(label, get, set)
 end
 
 -- speed stepper factory -------------------------------------------------------
-local function addStepper(label, get, set, minV, maxV, step)
+local stepperRegistry = {}
+
+local function addStepper(label, id, get, set, minV, maxV, step)
 	local row = new("Frame", {
+		Name = label .. "_Row",
 		Size = UDim2.new(1, 0, 0, 34),
 		BackgroundColor3 = THEME.panel,
 		BorderSizePixel = 0,
 	}, content)
 	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
 
-	new("TextLabel", {
+	local title = new("TextLabel", {
 		Size = UDim2.new(1, -118, 1, 0),
 		Position = UDim2.fromOffset(11, 0),
 		BackgroundTransparency = 1,
@@ -707,29 +621,36 @@ local function addStepper(label, get, set, minV, maxV, step)
 		Text = label,
 	}, row)
 
-	local value = new("TextLabel", {
-		Size = UDim2.fromOffset(46, 22),
-		Position = UDim2.new(1, -92, 0.5, 0),
-		AnchorPoint = Vector2.new(0, 0.5),
+	local controlGroup = new("Frame", {
+		Size = UDim2.new(0, 100, 1, 0),
+		Position = UDim2.new(1, -10, 0, 0),
+		AnchorPoint = Vector2.new(1, 0),
 		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		TextSize = 12,
-		TextColor3 = THEME.accent,
-		Text = "1.00x",
 	}, row)
 
+	local value = new("TextLabel", {
+		Size = UDim2.new(0, 42, 1, 0),
+		Position = UDim2.new(0, 30, 0, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextColor3 = THEME.accent,
+		Text = "1.00x",
+	}, controlGroup)
+
 	local function bump(dir)
+		local currentMode = (id == "fast" and "Fast" or "Slow")
+		if State.SpeedMode ~= currentMode then return end
+		
 		local v = math.clamp(math.floor((get() + dir * step) * 100 + 0.5) / 100, minV, maxV)
 		set(v)
 		value.Text = string.format("%.2fx", v)
-		if currentHumanoid then
-			refreshSpeed(currentHumanoid)
-		end
+		if currentHumanoid then refreshSpeed(currentHumanoid) end
 	end
 
 	local minus = new("TextButton", {
 		Size = UDim2.fromOffset(24, 22),
-		Position = UDim2.new(1, -42, 0.5, 0),
+		Position = UDim2.new(0, 0, 0.5, 0),
 		AnchorPoint = Vector2.new(0, 0.5),
 		BackgroundColor3 = THEME.off,
 		TextColor3 = THEME.text,
@@ -737,12 +658,12 @@ local function addStepper(label, get, set, minV, maxV, step)
 		TextSize = 12,
 		Text = "-",
 		AutoButtonColor = false,
-	}, row)
+	}, controlGroup)
 	new("UICorner", { CornerRadius = UDim.new(0, 6) }, minus)
 
 	local plus = new("TextButton", {
 		Size = UDim2.fromOffset(24, 22),
-		Position = UDim2.new(1, -14, 0.5, 0),
+		Position = UDim2.new(1, 0, 0.5, 0),
 		AnchorPoint = Vector2.new(1, 0.5),
 		BackgroundColor3 = THEME.off,
 		TextColor3 = THEME.text,
@@ -750,24 +671,38 @@ local function addStepper(label, get, set, minV, maxV, step)
 		TextSize = 12,
 		Text = "+",
 		AutoButtonColor = false,
-	}, row)
+	}, controlGroup)
 	new("UICorner", { CornerRadius = UDim.new(0, 6) }, plus)
 
 	minus.MouseButton1Click:Connect(function() bump(-1) end)
 	plus.MouseButton1Click:Connect(function() bump(1) end)
 	value.Text = string.format("%.2fx", get())
+
+	stepperRegistry[id] = { row = row, title = title, val = value, minus = minus, plus = plus }
+end
+
+local function updateStepperVisuals()
+	for id, ui in pairs(stepperRegistry) do
+		local isActive = (State.SpeedMode:lower() == id)
+		local trans = isActive and 0 or 0.6
+		ui.row.GroupTransparency = trans -- Note: Requires CanvasGroup, but we'll use manual for vanilla
+		ui.title.TextTransparency = trans
+		ui.val.TextTransparency = trans
+		ui.minus.BackgroundTransparency = trans + (isActive and 0 or 0.2)
+		ui.minus.TextTransparency = trans
+		ui.plus.BackgroundTransparency = trans + (isActive and 0 or 0.2)
+		ui.plus.TextTransparency = trans
+	end
 end
 
 -- wiring ------------------------------------------------------------------
 addSectionLabel("automation")
-addToggle("auto buy", function() return State.AutoBuyActive end, function(v) State.AutoBuyActive = v end)
 addToggle("instant interact", function() return State.InstantInteractions end, Prompts.setEnabled)
 
 addSectionLabel("movement")
 addToggle("multi jump", function() return State.MultiJumpActive end, function(v) State.MultiJumpActive = v end)
-addToggle("anti ragdoll", function() return State.NoRagdollActive end, function(v) State.NoRagdollActive = v end)
-addStepper("fast speed", function() return State.CurrentSpeedMultiplier end, function(v) State.CurrentSpeedMultiplier = v end, 0.5, 4, 0.25)
-addStepper("slow speed", function() return State.SlowSpeedMultiplier end, function(v) State.SlowSpeedMultiplier = v end, 0.25, 2, 0.25)
+addStepper("fast speed", "fast", function() return State.CurrentSpeedMultiplier end, function(v) State.CurrentSpeedMultiplier = v end, 1.0, 5, 0.25)
+addStepper("slow speed", "slow", function() return State.SlowSpeedMultiplier end, function(v) State.SlowSpeedMultiplier = v end, 1.0, 5, 0.25)
 
 local modeBtn = new("TextButton", {
 	Size = UDim2.new(1, 0, 0, 32),
@@ -782,13 +717,12 @@ new("UICorner", { CornerRadius = UDim.new(0, 8) }, modeBtn)
 modeBtn.MouseButton1Click:Connect(function()
 	State.SpeedMode = (State.SpeedMode == "Fast") and "Slow" or "Fast"
 	modeBtn.Text = "MODE: " .. string.upper(State.SpeedMode)
-	if currentHumanoid then
-		refreshSpeed(currentHumanoid)
-	end
+	updateStepperVisuals()
+	if currentHumanoid then refreshSpeed(currentHumanoid) end
 end)
+updateStepperVisuals()
 
-addSectionLabel("combat & visuals")
-addToggle("damage lock", function() return State.NoDamageActive end, function(v) State.NoDamageActive = v end)
+addSectionLabel("visuals")
 addToggle("player esp", function() return State.PlayerESPActive end, ESP.setEnabled)
 addToggle("zen glow", function() return State.KillGlowActive end, Glow.setEnabled)
 addToggle("glitch trail", function() return State.GlitchActive end, function(v) State.GlitchActive = v end)
@@ -799,7 +733,7 @@ new("TextLabel", {
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
 	TextColor3 = THEME.dim,
-	Text = "RightShift toggles · x unloads",
+	Text = "ALT/RShift toggle · x unload",
 }, content)
 
 -- dragging -----------------------------------------------------------------
@@ -848,7 +782,7 @@ end)
 
 RootJanitor.connect(UserInputService.InputBegan, function(input, gameProcessed)
 	if gameProcessed then return end
-	if input.KeyCode == Config.ToggleKey then
+	if input.KeyCode == Config.ToggleKey or input.KeyCode == Enum.KeyCode.LeftAlt or input.KeyCode == Enum.KeyCode.RightAlt then
 		panel.Visible = not panel.Visible
 	end
 end)
