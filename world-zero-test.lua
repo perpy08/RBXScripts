@@ -800,14 +800,34 @@ local function wzDetectIncomingAttacks()
 	return false
 end
 
--- Face a CFrame position (so clicks/attacks land correctly)
+-- WASD Key Management for continuous movement
+local heldKeys = {W=false, A=false, S=false, D=false}
+local function setKey(k, state)
+	if heldKeys[k] ~= state then
+		heldKeys[k] = state
+		VIM:SendKeyEvent(state, Enum.KeyCode[k], false, game)
+	end
+end
+local function releaseMovement()
+	setKey("W", false)
+	setKey("A", false)
+	setKey("S", false)
+	setKey("D", false)
+end
+
+-- Face target and aim camera so WASD keys are relative to target
 local function wzFaceTarget(targetPos)
 	local char = LocalPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not root then return end
-	local dir  = (targetPos - root.Position) * Vector3.new(1, 0, 1)
-	if dir.Magnitude < 0.1 then return end
-	root.CFrame = CFrame.new(root.Position, root.Position + dir)
+	
+	local dir = (targetPos - root.Position) * Vector3.new(1, 0, 1)
+	if dir.Magnitude > 0.1 then
+		root.CFrame = CFrame.new(root.Position, root.Position + dir)
+	end
+	
+	local cam = workspace.CurrentCamera
+	cam.CFrame = CFrame.new(cam.CFrame.Position, targetPos)
 end
 
 -- Determine if a mob is a boss
@@ -824,49 +844,63 @@ local function isBoss(mob)
 	return false
 end
 
--- Move logic: teleport near, then walk/sprint to mobs
-local function wzMoveToTarget(target, class)
+-- Movement: Teleport near, then actively hold WASD to maintain combat distance
+local function wzManageMovement(target, class)
 	local char = LocalPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
-	local hum  = char and char:FindFirstChildOfClass("Humanoid")
-	if not root or not hum then return end
+	if not root then return end
 	
-	-- Get flat target CFrame to avoid weird teleport rotations
-	local targetPivot = target.mob:GetPivot()
-	local _, rY, _ = targetPivot:ToOrientation()
-	local targetCF = CFrame.new(targetPivot.Position) * CFrame.Angles(0, rY, 0)
-	local targetPos = targetCF.Position
-	
+	local targetPos = target.collider.Position
 	local dist = (targetPos - root.Position).Magnitude
 	local isRanged = isRangedClass(class)
-	local safeRange = isRanged and 22 or 6
-	local tpDistance = isRanged and 30 or 15
 	
-	-- If far away, teleport near the mob first (to the optimal distance range)
-	if dist > (tpDistance + 10) then
-		char:PivotTo(targetCF * CFrame.new(0, 3, tpDistance))
-		task.wait(0.1) -- Allow physics to settle
-		dist = (targetPos - root.Position).Magnitude
+	-- 1. Teleport checkpoint if too far
+	if dist > 45 then
+		releaseMovement()
+		local tpDist = isRanged and 28 or 10
+		local targetPivot = target.mob:GetPivot()
+		local _, rY, _ = targetPivot:ToOrientation()
+		local targetCF = CFrame.new(targetPivot.Position) * CFrame.Angles(0, rY, 0)
+		char:PivotTo(targetCF * CFrame.new(0, 3, tpDist))
+		task.wait(0.1)
+		return
 	end
 	
-	if dist > safeRange then
-		-- Walk remainder of the distance
-		hum:MoveTo(targetPos)
+	-- 2. Align Camera and Character
+	wzFaceTarget(targetPos)
+	
+	-- 3. WASD Active Kiting
+	local safeRange = isRanged and 24 or 6
+	
+	if isRanged then
+		if dist > safeRange + 6 then
+			setKey("W", true); setKey("S", false); setKey("A", false); setKey("D", false)
+		elseif dist < safeRange - 6 then
+			setKey("W", false); setKey("S", true); setKey("A", false); setKey("D", false)
+		else
+			-- In the sweet spot: Strafe left to circle the enemy
+			setKey("W", false); setKey("S", false); setKey("A", true); setKey("D", false)
+		end
 	else
-		-- In safe range, stop moving
-		hum:MoveTo(root.Position)
+		if dist > safeRange then
+			setKey("W", true); setKey("S", false); setKey("A", false); setKey("D", false)
+		else
+			-- Melee hugging target
+			releaseMovement()
+		end
 	end
 end
 
--- Input-based kill aura: position → face → spam keys
+-- Input-based kill aura
 local function wzKillAura(class)
 	if not class then return false end
 	local target = wzGetNearest()
-	if not target then return false end
+	if not target then
+		releaseMovement()
+		return false
+	end
 	
-	-- Movement logic
-	wzMoveToTarget(target, class)
-	wzFaceTarget(target.collider.Position)
+	wzManageMovement(target, class)
 	
 	-- Auto Dodge
 	if wzDetectIncomingAttacks() then
@@ -883,11 +917,10 @@ local function wzKillAura(class)
 		for _, skill in ipairs(WZ_SKILL_KEYS) do
 			if not WZState.AutoFarmActive then break end
 			
-			-- Re-check dodge mid-cycle
 			if wzDetectIncomingAttacks() then simKey(WZ_DODGE_KEY) end
 
 			local t2 = wzGetNearest()
-			if t2 then wzFaceTarget(t2.collider.Position) end
+			if t2 then wzManageMovement(t2, class) end -- Continuously adjust WASD/aim
 			
 			if skill.type == "mouse" then
 				simClick()
@@ -906,35 +939,27 @@ local function wzKillAura(class)
 	return true
 end
 
--- Keep ranged classes floating while auto-farm is on
-RootJanitor.connect(RunService.Heartbeat, function()
-	if not WZState.AutoFarmActive then return end
-	local class = getWZClass()
-	if not class or not isRangedClass(class) then return end
-	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if root then
-		local vel = root.AssemblyLinearVelocity
-		if vel.Y < -2 then
-			root.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
-		end
-	end
-end)
+-- Release keys safely if script unloads
+RootJanitor.add({clean = function() pcall(releaseMovement) end})
 
--- Auto-farm loop: position + keypress attacks + mission handling
+-- Auto-farm loop
 task.spawn(function()
 	while Runtime.alive do
 		if not WZState.AutoFarmActive then
+			releaseMovement()
 			task.wait(0.25)
 		else
 			local class = getWZClass()
 			if class then
 				local attacked = wzKillAura(class)
 				if not attacked then
+					releaseMovement()
 					wzHandleMissionObjects()
 					wzMoveTowardProgress()
 					task.wait(0.5)
 				end
 			else
+				releaseMovement()
 				task.wait(1)
 			end
 		end
