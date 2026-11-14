@@ -621,11 +621,28 @@ local function wzTouch(part)
 	end
 end
 
-local function wzMoveTo(cf)
+local function isRangedClass(class)
+	local ranged = { ["Mage"]=true, ["Archer"]=true, ["IcefireMage"]=true, ["MageOfLight"]=true, ["Demon"]=true }
+	return ranged[class] or false
+end
+
+local function wzMoveTo(cf, class)
 	local char = LocalPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not root then return end
-	char:PivotTo(cf)
+	
+	local finalCF = cf
+	if class then
+		if isRangedClass(class) then
+			-- Float 25 studs above, looking down
+			finalCF = cf * CFrame.new(0, 25, 0) * CFrame.Angles(math.rad(-90), 0, 0)
+			root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) 
+		else
+			-- Stand 8 studs behind/beside
+			finalCF = cf * CFrame.new(0, 0, 8)
+		end
+	end
+	char:PivotTo(finalCF)
 end
 
 local function wzNearestMob()
@@ -735,53 +752,45 @@ local function wzGetMobs()
 end
 
 -- Try all known WZ combat APIs until one works
-local wzAttackMethod = nil -- cached after first success
+local function getWzAttackKey(Combat)
+	local key = ""
+	pcall(function()
+		if Combat.ValidateTargets then
+			local env = getfenv(Combat.ValidateTargets)
+			if env and env.SpendKey then key = env.SpendKey() end
+		end
+	end)
+	return key
+end
+
+local wzAttackMethod = nil
 
 local function wzTryAttack(Combat, mob, pos, atkName, class)
 	local RS = game:GetService("ReplicatedStorage")
 	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	local key = getWzAttackKey(Combat)
 	
-	-- Method 1: Combat.AttackTargets(nil, mob, pos, atkName) — Tower AutoFarm v2
 	if not wzAttackMethod or wzAttackMethod == 1 then
-		local ok = pcall(function()
-			Combat.AttackTargets(nil, mob, pos, atkName)
-		end)
+		local ok = pcall(function() Combat.AttackTargets(nil, mob, pos, atkName) end)
 		if ok then wzAttackMethod = 1; return true end
 	end
-	
-	-- Method 2: Combat.AttackTargets(Combat, mob, pos, atkName) — method-call style
 	if not wzAttackMethod or wzAttackMethod == 2 then
-		local ok = pcall(function()
-			Combat.AttackTargets(Combat, mob, pos, atkName)
-		end)
-		if ok then wzAttackMethod = 2; return true end
+		local atkTarget = RS:FindFirstChild("Shared") and RS.Shared:FindFirstChild("Combat") and RS.Shared.Combat:FindFirstChild("AttackTarget")
+		if atkTarget then
+			local ok = pcall(function() atkTarget:FireServer(mob, pos, atkName, key, time()) end)
+			if ok then wzAttackMethod = 2; return true end
+		end
 	end
-	
-	-- Method 3: Remote Attack:FireServer(atkName, targetPos, direction)
 	if not wzAttackMethod or wzAttackMethod == 3 then
 		local attackRemote = RS:FindFirstChild("Shared") and RS.Shared:FindFirstChild("Combat") and RS.Shared.Combat:FindFirstChild("Attack")
 		if attackRemote and root and mob[1] then
 			local collider = mob[1]:FindFirstChild("Collider")
 			if collider then
-				local ok = pcall(function()
-					attackRemote:FireServer(atkName, collider.Position, collider.Position - root.Position)
-				end)
+				local ok = pcall(function() attackRemote:FireServer(atkName, collider.Position, collider.Position - root.Position) end)
 				if ok then wzAttackMethod = 3; return true end
 			end
 		end
 	end
-	
-	-- Method 4: Remote AttackTarget:FireServer(mob, pos, atkName)
-	if not wzAttackMethod or wzAttackMethod == 4 then
-		local atkTarget = RS:FindFirstChild("Shared") and RS.Shared:FindFirstChild("Combat") and RS.Shared.Combat:FindFirstChild("AttackTarget")
-		if atkTarget then
-			local ok = pcall(function()
-				atkTarget:FireServer(mob, pos, atkName, "", time())
-			end)
-			if ok then wzAttackMethod = 4; return true end
-		end
-	end
-	
 	return false
 end
 
@@ -790,28 +799,23 @@ local function wzKillAura(Combat, class, attacks)
 	local mob, pos, nearest = wzGetMobs()
 	if #mob == 0 then return false end
 	
-	-- Move to nearest mob
 	if nearest then
 		local collider = nearest:FindFirstChild("Collider") or nearest.PrimaryPart
 		if collider then
-			wzMoveTo(collider.CFrame * CFrame.new(0, 5, 0))
+			wzMoveTo(collider.CFrame, class)
 		end
 	end
 	
-	-- Fire AttackBuff (original fires this for ALL classes)
 	pcall(function()
 		game:GetService("ReplicatedStorage").Shared.Combat.Skillsets.DualWielder.AttackBuff:FireServer()
 	end)
 	
-	-- Cycle through all class attacks
 	for _, atkName in ipairs(attacks) do
 		if not WZState.AutoFarmActive or not Runtime.alive then break end
-		mob, pos = wzGetMobs() -- rebuild each attack
+		mob, pos = wzGetMobs()
 		if #mob > 0 then
 			wzTryAttack(Combat, mob, pos, atkName, class)
-		else
-			break -- all mobs dead
-		end
+		else break end
 		task.wait(0.2)
 	end
 	return true
