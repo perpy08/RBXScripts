@@ -824,29 +824,36 @@ local function isBoss(mob)
 	return false
 end
 
--- Move logic: walk/sprint to mobs, teleport to checkpoints
+-- Move logic: teleport near, then walk/sprint to mobs
 local function wzMoveToTarget(target, class)
 	local char = LocalPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	local hum  = char and char:FindFirstChildOfClass("Humanoid")
 	if not root or not hum then return end
 	
-	local targetPos = target.collider.Position
-	local dist = (targetPos - root.Position).Magnitude
+	-- Get flat target CFrame to avoid weird teleport rotations
+	local targetPivot = target.mob:GetPivot()
+	local _, rY, _ = targetPivot:ToOrientation()
+	local targetCF = CFrame.new(targetPivot.Position) * CFrame.Angles(0, rY, 0)
+	local targetPos = targetCF.Position
 	
-	local safeRange = isRangedClass(class) and 22 or 6
+	local dist = (targetPos - root.Position).Magnitude
+	local isRanged = isRangedClass(class)
+	local safeRange = isRanged and 22 or 6
+	local tpDistance = isRanged and 30 or 15
+	
+	-- If far away, teleport near the mob first (to the optimal distance range)
+	if dist > (tpDistance + 10) then
+		char:PivotTo(targetCF * CFrame.new(0, 3, tpDistance))
+		task.wait(0.1) -- Allow physics to settle
+		dist = (targetPos - root.Position).Magnitude
+	end
 	
 	if dist > safeRange then
-		-- Sprint toward target
-		hum.WalkSpeed = 65 
+		-- Walk remainder of the distance
 		hum:MoveTo(targetPos)
-		
-		-- If ranged, stop at edge of range
-		if isRangedClass(class) and dist < 28 then
-			hum:MoveTo(root.Position) -- Stop
-		end
 	else
-		-- In safe range, stop
+		-- In safe range, stop moving
 		hum:MoveTo(root.Position)
 	end
 end
