@@ -36,6 +36,9 @@ local Config = {
 	ToggleKey          = Enum.KeyCode.RightShift,
 }
 
+-- Settings persistence via getgenv (survives teleport re-execution)
+local _saved = (typeof(getgenv) == "function") and getgenv().__ZenGlitchSavedState or nil
+
 -- State (Universal Refined Build) ---------------------------------------
 local State = {
 	InstantInteractions    = false,
@@ -46,8 +49,12 @@ local State = {
 	CurrentSpeedMultiplier = 1.0,
 	SlowSpeedMultiplier    = 1.0,
 	AttackSpeedMultiplier  = 1.0,
-	SpeedMode              = "Fast", -- "Fast" | "Slow"
+	SpeedMode              = "Fast",
 }
+-- Restore saved values if they exist
+if _saved and _saved.State then
+	for k, v in pairs(_saved.State) do State[k] = v end
+end
 
 local Runtime = { alive = true }
 
@@ -485,8 +492,27 @@ local WZState = {
 	CoinCollectActive  = false,
 	HideDmgNums        = false,
 }
+if _saved and _saved.WZState then
+	for k, v in pairs(_saved.WZState) do WZState[k] = v end
+end
 
 local WZRunning = { autofarm = false }
+
+-- Auto-save settings to getgenv every 5s (survives queue_on_teleport reloads)
+local function saveSettings()
+	if typeof(getgenv) ~= "function" then return end
+	getgenv().__ZenGlitchSavedState = {
+		State = State,
+		WZState = WZState,
+	}
+end
+
+task.spawn(function()
+	while Runtime.alive do
+		saveSettings()
+		task.wait(5)
+	end
+end)
 
 -- World//Zero class attack tables
 local WZClasses = {
@@ -516,29 +542,47 @@ local function getWZCombat()
 end
 
 local function getWZClass()
+	-- Method 1: workspace.Characters[Name].Properties.Class (most reliable in modern WZ)
+	local charFolder = workspace:FindFirstChild("Characters")
+	if charFolder then
+		for _, name in ipairs({LocalPlayer.Name, LocalPlayer.DisplayName}) do
+			local c = charFolder:FindFirstChild(name)
+			if c then
+				local props = c:FindFirstChild("Properties")
+				if props and props:FindFirstChild("Class") then
+					return props.Class.Value
+				end
+			end
+		end
+	end
+	
+	-- Method 2: Character.Properties.Class (on the actual character model)
+	local cha = LocalPlayer.Character
+	if cha then
+		local props = cha:FindFirstChild("Properties")
+		if props and props:FindFirstChild("Class") then
+			return props.Class.Value
+		end
+	end
+	
+	-- Method 3: ReplicatedStorage.Profiles
 	local RS = game:GetService("ReplicatedStorage")
 	local profiles = RS:FindFirstChild("Profiles")
-	if not profiles then return nil end
-	
-	-- Deep scan for any profile belonging to us
-	local possibleNames = {LocalPlayer.Name, LocalPlayer.DisplayName}
-	if LocalPlayer.Character then table.insert(possibleNames, LocalPlayer.Character.Name) end
-	
-	for _, name in ipairs(possibleNames) do
-		local p = profiles:FindFirstChild(name)
-		if p and p:FindFirstChild("Class") then
-			return p.Class.Value
+	if profiles then
+		for _, name in ipairs({LocalPlayer.Name, LocalPlayer.DisplayName, cha and cha.Name}) do
+			if name then
+				local p = profiles:FindFirstChild(name)
+				if p and p:FindFirstChild("Class") then
+					return p.Class.Value
+				end
+			end
+		end
+		for _, p in ipairs(profiles:GetChildren()) do
+			if p:FindFirstChild("Class") then return p.Class.Value end
 		end
 	end
 	
-	-- Extreme fallback: search all profiles for the one that likely belongs to us
-	for _, p in ipairs(profiles:GetChildren()) do
-		if p:FindFirstChild("Class") then
-			return p.Class.Value -- Usually only 1 profile exists in local view
-		end
-	end
-	
-	return LocalPlayer:GetAttribute("Class")
+	return nil
 end
 
 local function wzDisableChecks(Combat)
@@ -655,24 +699,56 @@ local function wzMoveTowardProgress()
 	return false
 end
 
-local function wzAttackTargets(Combat, class, attacks, mobList, posList)
-	if not Combat or not class or not attacks or #mobList == 0 then return end
-	if class == "DualWielder" then
-		pcall(function()
-			game:GetService("ReplicatedStorage").Shared.Combat.Skillsets.DualWielder.AttackBuff:FireServer()
-		end)
+local function wzKillAura(Combat, class, attacks)
+	if not Combat or not class or not attacks then return end
+	local mobsFolder = workspace:FindFirstChild("Mobs")
+	local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+	if not mobsFolder or not head then return end
+	
+	-- Build mob/pos tables fresh each attack cycle (matches original)
+	local mob, pos = {}, {}
+	for _, v in ipairs(mobsFolder:GetChildren()) do
+		local collider = v:FindFirstChild("Collider")
+		local hp = v:FindFirstChild("HealthProperties")
+		local hpVal = hp and hp:FindFirstChild("Health")
+		if collider and hpVal and hpVal.Value > 0 then
+			table.insert(mob, v)
+			table.insert(pos, head.Position)
+		end
 	end
-	local delayPerHit = (class == "Berserker") and 0.2 or 0.12
-	for _, atk in ipairs(attacks) do
+	
+	if #mob == 0 then return false end
+	
+	-- Fire AttackBuff for ALL classes (original does this)
+	pcall(function()
+		game:GetService("ReplicatedStorage").Shared.Combat.Skillsets.DualWielder.AttackBuff:FireServer()
+	end)
+	
+	-- Cycle through all class attacks
+	for _, atkName in ipairs(attacks) do
 		if not WZState.AutoFarmActive or not Runtime.alive then break end
-		pcall(function()
-			Combat.AttackTargets(nil, mobList, posList, atk)
-		end)
-		task.wait(delayPerHit)
+		-- Rebuild mob list each attack (mobs may die mid-chain)
+		mob, pos = {}, {}
+		for _, v in ipairs(mobsFolder:GetChildren()) do
+			local collider = v:FindFirstChild("Collider")
+			local hp = v:FindFirstChild("HealthProperties")
+			local hpVal = hp and hp:FindFirstChild("Health")
+			if collider and hpVal and hpVal.Value > 0 then
+				table.insert(mob, v)
+				table.insert(pos, head.Position)
+			end
+		end
+		if #mob > 0 then
+			pcall(function()
+				Combat.AttackTargets(nil, mob, pos, atkName)
+			end)
+		end
+		task.wait(0.2)
 	end
+	return true
 end
 
--- Auto-farm loop: move + mission + attack
+-- Auto-farm loop: killAura + mission + movement
 task.spawn(function()
 	while Runtime.alive do
 		if not WZState.AutoFarmActive then
@@ -683,18 +759,12 @@ task.spawn(function()
 			local attacks = class and WZClasses[class]
 			if Combat and class and attacks then
 				wzDisableChecks(Combat)
-				local mobs, positions, nearest = wzNearestMob()
-				if nearest then
-					local collider = nearest:FindFirstChild("Collider") or nearest.PrimaryPart
-					if collider then
-						wzMoveTo(collider.CFrame * CFrame.new(0, 8, 0))
-					end
-					wzAttackTargets(Combat, class, attacks, mobs, positions)
-				else
-					local acted = wzHandleMissionObjects()
-					if not acted then wzMoveTowardProgress() end
-					task.wait(0.2)
+				local attacked = wzKillAura(Combat, class, attacks)
+				if not attacked then
+					wzHandleMissionObjects()
+					wzMoveTowardProgress()
 				end
+				task.wait(0.5)
 			else
 				task.wait(1)
 			end
