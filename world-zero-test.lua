@@ -800,7 +800,7 @@ local function wzDetectIncomingAttacks()
 	return false
 end
 
--- WASD Key Management for continuous movement
+-- WASD Key Management
 local heldKeys = {W=false, A=false, S=false, D=false}
 local function setKey(k, state)
 	if heldKeys[k] ~= state then
@@ -809,42 +809,62 @@ local function setKey(k, state)
 	end
 end
 local function releaseMovement()
-	setKey("W", false)
-	setKey("A", false)
-	setKey("S", false)
-	setKey("D", false)
+	setKey("W", false); setKey("A", false); setKey("S", false); setKey("D", false)
 end
 
--- Face target and aim camera so WASD keys are relative to target
+-- Stuck detection
+local wzLastPos = Vector3.zero
+local wzLastPosTime = 0
+local wzStrafeDir = 1  -- 1 = A (left), -1 = D (right)
+local wzStuckFlips = 0
+
+local function wzCheckStuck(root)
+	local now = os.clock()
+	if now - wzLastPosTime > 0.6 then
+		local moved = (root.Position - wzLastPos).Magnitude
+		if moved < 1.5 then
+			-- Stuck! Flip strafe direction
+			wzStrafeDir = -wzStrafeDir
+			wzStuckFlips += 1
+			-- If flipped too many times in a row, try walking forward briefly
+			if wzStuckFlips > 3 then
+				wzStuckFlips = 0
+				return "unstick"
+			end
+		else
+			wzStuckFlips = 0
+		end
+		wzLastPos = root.Position
+		wzLastPosTime = now
+	end
+	return nil
+end
+
+-- Face target and aim camera
 local function wzFaceTarget(targetPos)
 	local char = LocalPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not root then return end
-	
 	local dir = (targetPos - root.Position) * Vector3.new(1, 0, 1)
 	if dir.Magnitude > 0.1 then
 		root.CFrame = CFrame.new(root.Position, root.Position + dir)
 	end
-	
 	local cam = workspace.CurrentCamera
 	cam.CFrame = CFrame.new(cam.CFrame.Position, targetPos)
 end
 
--- Determine if a mob is a boss
+-- Boss detection
 local function isBoss(mob)
 	local name = mob.Name:lower()
-	local names = {"boss", "mama", "king", "siren", "kraken", "nautilus", "anubis", "zeus", "commander", "treeent"}
-	for _, n in ipairs(names) do
+	for _, n in ipairs({"boss","mama","king","siren","kraken","nautilus","anubis","zeus","commander","treeent","dragon"}) do
 		if name:find(n) then return true end
 	end
 	local hp = mob:FindFirstChild("HealthProperties")
-	if hp and hp:FindFirstChild("MaxHealth") and hp.MaxHealth.Value > 12000 then
-		return true
-	end
+	if hp and hp:FindFirstChild("MaxHealth") and hp.MaxHealth.Value > 12000 then return true end
 	return false
 end
 
--- Movement: Teleport near, then actively hold WASD to maintain combat distance
+-- Movement: Teleport near → WASD walk → circle with stuck detection
 local function wzManageMovement(target, class)
 	local char = LocalPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -854,49 +874,104 @@ local function wzManageMovement(target, class)
 	local dist = (targetPos - root.Position).Magnitude
 	local isRanged = isRangedClass(class)
 	
-	-- 1. Teleport checkpoint if too far
+	-- Teleport near if too far
 	if dist > 45 then
 		releaseMovement()
-		local tpDist = isRanged and 28 or 10
+		local tpDist = isRanged and 28 or 12
 		local targetPivot = target.mob:GetPivot()
 		local _, rY, _ = targetPivot:ToOrientation()
 		local targetCF = CFrame.new(targetPivot.Position) * CFrame.Angles(0, rY, 0)
 		char:PivotTo(targetCF * CFrame.new(0, 3, tpDist))
-		task.wait(0.1)
+		wzLastPos = root.Position
+		wzLastPosTime = os.clock()
+		task.wait(0.15)
 		return
 	end
 	
-	-- 2. Align Camera and Character
 	wzFaceTarget(targetPos)
 	
-	-- 3. WASD Active Kiting
-	local safeRange = isRanged and 24 or 6
+	-- Check if stuck against a wall/furniture
+	local stuckAction = wzCheckStuck(root)
+	if stuckAction == "unstick" then
+		-- Walk diagonally forward to escape
+		setKey("W", true)
+		setKey(wzStrafeDir == 1 and "A" or "D", true)
+		setKey(wzStrafeDir == 1 and "D" or "A", false)
+		setKey("S", false)
+		return
+	end
+	
+	local safeRange = isRanged and 22 or 6
 	
 	if isRanged then
-		if dist > safeRange + 6 then
+		if dist > safeRange + 5 then
+			-- Too far: walk toward
 			setKey("W", true); setKey("S", false); setKey("A", false); setKey("D", false)
-		elseif dist < safeRange - 6 then
-			setKey("W", false); setKey("S", true); setKey("A", false); setKey("D", false)
+		elseif dist < safeRange - 4 then
+			-- Too close: back away + strafe
+			setKey("W", false); setKey("S", true)
+			setKey(wzStrafeDir == 1 and "A" or "D", true)
+			setKey(wzStrafeDir == 1 and "D" or "A", false)
 		else
-			-- In the sweet spot: Strafe left to circle the enemy
-			setKey("W", false); setKey("S", false); setKey("A", true); setKey("D", false)
+			-- Sweet spot: circle strafe + slight forward lean for smooth arc
+			setKey("S", false)
+			setKey("W", true) -- slight forward keeps the arc smooth
+			setKey(wzStrafeDir == 1 and "A" or "D", true)
+			setKey(wzStrafeDir == 1 and "D" or "A", false)
 		end
 	else
-		if dist > safeRange then
+		-- Melee: walk to target, stop when close
+		if dist > safeRange + 2 then
 			setKey("W", true); setKey("S", false); setKey("A", false); setKey("D", false)
-		else
-			-- Melee hugging target
+		elseif dist <= safeRange then
 			releaseMovement()
 		end
 	end
 end
 
--- Input-based kill aura
+-- Separate attack loops: LMB spam + skill rotation run concurrently
+local wzAutoClickActive = false
+
+local function wzStartAutoClick()
+	if wzAutoClickActive then return end
+	wzAutoClickActive = true
+	task.spawn(function()
+		while wzAutoClickActive and WZState.AutoFarmActive and Runtime.alive do
+			simClick()  -- LMB normal attack
+			task.wait(0.01)  -- 10ms
+		end
+	end)
+end
+
+local function wzStopAutoClick()
+	wzAutoClickActive = false
+end
+
+-- Skill rotation: E, R, 1 (+ X for bosses) at 30ms intervals
+local function wzSkillRotation(target)
+	for _, skill in ipairs(WZ_SKILL_KEYS) do
+		if not WZState.AutoFarmActive or not Runtime.alive then break end
+		if skill.type == "key" then
+			-- Dodge check between skills
+			if wzDetectIncomingAttacks() then simKey(WZ_DODGE_KEY) end
+			simKey(skill.code)
+			task.wait(0.03)  -- 30ms
+		end
+	end
+	-- Ultimate: boss only
+	if target and isBoss(target.mob) then
+		simKey(WZ_ULT_KEY)
+		task.wait(0.03)
+	end
+end
+
+-- Main kill aura
 local function wzKillAura(class)
 	if not class then return false end
 	local target = wzGetNearest()
 	if not target then
 		releaseMovement()
+		wzStopAutoClick()
 		return false
 	end
 	
@@ -905,48 +980,34 @@ local function wzKillAura(class)
 	-- Auto Dodge
 	if wzDetectIncomingAttacks() then
 		simKey(WZ_DODGE_KEY)
-		task.wait(0.2)
+		task.wait(0.15)
 	end
-
-	-- Attack Cycle
-	local cycleCount = 2
-	for _ = 1, cycleCount do
-		if not WZState.AutoFarmActive or not Runtime.alive then break end
-		if not hasMobs() then break end
-		
-		for _, skill in ipairs(WZ_SKILL_KEYS) do
-			if not WZState.AutoFarmActive then break end
-			
-			if wzDetectIncomingAttacks() then simKey(WZ_DODGE_KEY) end
-
-			local t2 = wzGetNearest()
-			if t2 then wzManageMovement(t2, class) end -- Continuously adjust WASD/aim
-			
-			if skill.type == "mouse" then
-				simClick()
-			elseif skill.type == "key" then
-				simKey(skill.code)
-			end
-			task.wait(0.2)
-		end
-		
-		-- Ultimate usage: Boss only
-		if isBoss(target.mob) then
-			simKey(WZ_ULT_KEY)
-			task.wait(0.2)
-		end
-	end
+	
+	-- Start LMB spam (runs in background at 10ms)
+	wzStartAutoClick()
+	
+	-- Run skill rotation (E, R, 1 at 30ms + X if boss)
+	wzSkillRotation(target)
+	
+	-- Update movement between rotations
+	local t2 = wzGetNearest()
+	if t2 then wzManageMovement(t2, class) end
+	
 	return true
 end
 
--- Release keys safely if script unloads
-RootJanitor.add({clean = function() pcall(releaseMovement) end})
+-- Cleanup: release keys + stop auto click on unload
+RootJanitor.add({clean = function()
+	pcall(releaseMovement)
+	wzStopAutoClick()
+end})
 
 -- Auto-farm loop
 task.spawn(function()
 	while Runtime.alive do
 		if not WZState.AutoFarmActive then
 			releaseMovement()
+			wzStopAutoClick()
 			task.wait(0.25)
 		else
 			local class = getWZClass()
@@ -954,12 +1015,14 @@ task.spawn(function()
 				local attacked = wzKillAura(class)
 				if not attacked then
 					releaseMovement()
+					wzStopAutoClick()
 					wzHandleMissionObjects()
 					wzMoveTowardProgress()
 					task.wait(0.5)
 				end
 			else
 				releaseMovement()
+				wzStopAutoClick()
 				task.wait(1)
 			end
 		end
