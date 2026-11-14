@@ -295,6 +295,10 @@ local canDoubleJump = false
 local hasDoubleJumped = false
 
 local function targetWalkSpeed(humanoid)
+	-- AutoFarm Sprint Override
+	if WZState and WZState.AutoFarmActive and hasMobs and hasMobs() then
+		return 65
+	end
 	local base = humanoid:GetAttribute("ZenBaseSpeed") or Config.BaseWalkSpeed
 	return base * activeMultiplier()
 end
@@ -740,14 +744,15 @@ local function simClick()
 	end)
 end
 
--- WZ skill keys: LMB = normal, E/R = skills, X = Ultimate, 1 = Pet
+-- WZ skill keys: LMB = normal, E/R = skills, 1 = Pet
 local WZ_SKILL_KEYS = {
 	{ type = "mouse" },                       -- Left Click = basic attack
 	{ type = "key", code = Enum.KeyCode.E },  -- E = skill 1
 	{ type = "key", code = Enum.KeyCode.R },  -- R = skill 2
-	{ type = "key", code = Enum.KeyCode.X },  -- X = ultimate
 	{ type = "key", code = Enum.KeyCode.One },-- 1 = pet skill
 }
+local WZ_ULT_KEY = Enum.KeyCode.X
+local WZ_DODGE_KEY = Enum.KeyCode.C
 
 -- Get nearest alive mob
 local function wzGetNearest()
@@ -774,6 +779,27 @@ local function hasMobs()
 	return wzGetNearest() ~= nil
 end
 
+-- Detection for attack markers (red rings/indicators)
+local function wzDetectIncomingAttacks()
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not root then return false end
+	
+	-- Scan workspace and Effects folder for markers
+	local folders = {workspace, workspace:FindFirstChild("Effects"), workspace:FindFirstChild("MissionObjects")}
+	for _, folder in ipairs(folders) do
+		if folder then
+			for _, v in ipairs(folder:GetChildren()) do
+				-- common marker names in WZ
+				if v:IsA("BasePart") and (v.Name:find("Marker") or v.Name:find("Indicator") or v.Name:find("Ring") or v.Name:find("AOE")) then
+					local dist = (v.Position - root.Position).Magnitude
+					if dist < 18 then return true end
+				end
+			end
+		end
+	end
+	return false
+end
+
 -- Face a CFrame position (so clicks/attacks land correctly)
 local function wzFaceTarget(targetPos)
 	local char = LocalPlayer.Character
@@ -784,49 +810,75 @@ local function wzFaceTarget(targetPos)
 	root.CFrame = CFrame.new(root.Position, root.Position + dir)
 end
 
--- Move to safe position based on class type
+-- Determine if a mob is a boss
+local function isBoss(mob)
+	local name = mob.Name:lower()
+	local names = {"boss", "mama", "king", "siren", "kraken", "nautilus", "anubis", "zeus", "commander", "treeent"}
+	for _, n in ipairs(names) do
+		if name:find(n) then return true end
+	end
+	local hp = mob:FindFirstChild("HealthProperties")
+	if hp and hp:FindFirstChild("MaxHealth") and hp.MaxHealth.Value > 12000 then
+		return true
+	end
+	return false
+end
+
+-- Move logic: walk/sprint to mobs, teleport to checkpoints
 local function wzMoveToTarget(target, class)
 	local char = LocalPlayer.Character
-	if not char then return end
-	local cf = target.collider.CFrame
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local hum  = char and char:FindFirstChildOfClass("Humanoid")
+	if not root or not hum then return end
 	
-	if isRangedClass(class) then
-		-- Hover 28 studs above and looking down
-		local above = cf * CFrame.new(0, 28, 0) * CFrame.Angles(math.rad(-90), 0, 0)
-		char:PivotTo(above)
-		-- Kill vertical velocity so we float
-		pcall(function()
-			local root = char:FindFirstChild("HumanoidRootPart")
-			if root then root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end
-		end)
+	local targetPos = target.collider.Position
+	local dist = (targetPos - root.Position).Magnitude
+	
+	local safeRange = isRangedClass(class) and 22 or 6
+	
+	if dist > safeRange then
+		-- Sprint toward target
+		hum.WalkSpeed = 65 
+		hum:MoveTo(targetPos)
+		
+		-- If ranged, stop at edge of range
+		if isRangedClass(class) and dist < 28 then
+			hum:MoveTo(root.Position) -- Stop
+		end
 	else
-		-- Stand 7 studs beside (behind the mob from its facing)
-		local safe = cf * CFrame.new(0, 2, 7)
-		char:PivotTo(safe)
+		-- In safe range, stop
+		hum:MoveTo(root.Position)
 	end
 end
 
--- Input-based kill aura: position → face → spam all keys
+-- Input-based kill aura: position → face → spam keys
 local function wzKillAura(class)
 	if not class then return false end
 	local target = wzGetNearest()
 	if not target then return false end
 	
+	-- Movement logic
 	wzMoveToTarget(target, class)
 	wzFaceTarget(target.collider.Position)
-	task.wait(0.1) -- let the teleport settle
 	
-	-- Spam all three skill inputs in a cycle
-	local cycleCount = 3 -- repeat the LMB+E+R cycle 3 times per farm tick
+	-- Auto Dodge
+	if wzDetectIncomingAttacks() then
+		simKey(WZ_DODGE_KEY)
+		task.wait(0.2)
+	end
+
+	-- Attack Cycle
+	local cycleCount = 2
 	for _ = 1, cycleCount do
 		if not WZState.AutoFarmActive or not Runtime.alive then break end
 		if not hasMobs() then break end
 		
 		for _, skill in ipairs(WZ_SKILL_KEYS) do
 			if not WZState.AutoFarmActive then break end
-			if not hasMobs() then break end
 			
-			-- Re-face in case we drifted
+			-- Re-check dodge mid-cycle
+			if wzDetectIncomingAttacks() then simKey(WZ_DODGE_KEY) end
+
 			local t2 = wzGetNearest()
 			if t2 then wzFaceTarget(t2.collider.Position) end
 			
@@ -835,7 +887,13 @@ local function wzKillAura(class)
 			elseif skill.type == "key" then
 				simKey(skill.code)
 			end
-			task.wait(0.25)
+			task.wait(0.2)
+		end
+		
+		-- Ultimate usage: Boss only
+		if isBoss(target.mob) then
+			simKey(WZ_ULT_KEY)
+			task.wait(0.2)
 		end
 	end
 	return true
