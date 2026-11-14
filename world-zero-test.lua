@@ -36,8 +36,20 @@ local Config = {
 	ToggleKey          = Enum.KeyCode.RightShift,
 }
 
--- Settings persistence via getgenv (survives teleport re-execution)
-local _saved = (typeof(getgenv) == "function") and getgenv().__ZenGlitchSavedState or nil
+-- Settings persistence via writefile/readfile (survives teleports reliably)
+local HttpService = game:GetService("HttpService")
+local SAVE_FILE = "ZenGlitch_config.json"
+
+local function loadSavedSettings()
+	local ok, data = pcall(function() return readfile(SAVE_FILE) end)
+	if ok and data then
+		local ok2, parsed = pcall(function() return HttpService:JSONDecode(data) end)
+		if ok2 and parsed then return parsed end
+	end
+	return nil
+end
+
+local _saved = loadSavedSettings()
 
 -- State (Universal Refined Build) ---------------------------------------
 local State = {
@@ -51,7 +63,6 @@ local State = {
 	AttackSpeedMultiplier  = 1.0,
 	SpeedMode              = "Fast",
 }
--- Restore saved values if they exist
 if _saved and _saved.State then
 	for k, v in pairs(_saved.State) do State[k] = v end
 end
@@ -498,13 +509,12 @@ end
 
 local WZRunning = { autofarm = false }
 
--- Auto-save settings to getgenv every 5s (survives queue_on_teleport reloads)
+-- Auto-save settings to disk every 5s
 local function saveSettings()
-	if typeof(getgenv) ~= "function" then return end
-	getgenv().__ZenGlitchSavedState = {
-		State = State,
-		WZState = WZState,
-	}
+	pcall(function()
+		local data = HttpService:JSONEncode({ State = State, WZState = WZState })
+		writefile(SAVE_FILE, data)
+	end)
 end
 
 task.spawn(function()
@@ -699,27 +709,96 @@ local function wzMoveTowardProgress()
 	return false
 end
 
-local function wzKillAura(Combat, class, attacks)
-	if not Combat or not class or not attacks then return end
+-- Build mob + position tables from workspace.Mobs
+local function wzGetMobs()
 	local mobsFolder = workspace:FindFirstChild("Mobs")
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 	local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
-	if not mobsFolder or not head then return end
-	
-	-- Build mob/pos tables fresh each attack cycle (matches original)
-	local mob, pos = {}, {}
+	if not mobsFolder or not root then return {}, {}, nil end
+	local posRef = head or root
+	local mob, pos, nearest, nearDist = {}, {}, nil, math.huge
 	for _, v in ipairs(mobsFolder:GetChildren()) do
 		local collider = v:FindFirstChild("Collider")
 		local hp = v:FindFirstChild("HealthProperties")
 		local hpVal = hp and hp:FindFirstChild("Health")
 		if collider and hpVal and hpVal.Value > 0 then
 			table.insert(mob, v)
-			table.insert(pos, head.Position)
+			table.insert(pos, posRef.Position)
+			local dist = (collider.Position - root.Position).Magnitude
+			if dist < nearDist then
+				nearDist = dist
+				nearest = v
+			end
+		end
+	end
+	return mob, pos, nearest
+end
+
+-- Try all known WZ combat APIs until one works
+local wzAttackMethod = nil -- cached after first success
+
+local function wzTryAttack(Combat, mob, pos, atkName, class)
+	local RS = game:GetService("ReplicatedStorage")
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	
+	-- Method 1: Combat.AttackTargets(nil, mob, pos, atkName) — Tower AutoFarm v2
+	if not wzAttackMethod or wzAttackMethod == 1 then
+		local ok = pcall(function()
+			Combat.AttackTargets(nil, mob, pos, atkName)
+		end)
+		if ok then wzAttackMethod = 1; return true end
+	end
+	
+	-- Method 2: Combat.AttackTargets(Combat, mob, pos, atkName) — method-call style
+	if not wzAttackMethod or wzAttackMethod == 2 then
+		local ok = pcall(function()
+			Combat.AttackTargets(Combat, mob, pos, atkName)
+		end)
+		if ok then wzAttackMethod = 2; return true end
+	end
+	
+	-- Method 3: Remote Attack:FireServer(atkName, targetPos, direction)
+	if not wzAttackMethod or wzAttackMethod == 3 then
+		local attackRemote = RS:FindFirstChild("Shared") and RS.Shared:FindFirstChild("Combat") and RS.Shared.Combat:FindFirstChild("Attack")
+		if attackRemote and root and mob[1] then
+			local collider = mob[1]:FindFirstChild("Collider")
+			if collider then
+				local ok = pcall(function()
+					attackRemote:FireServer(atkName, collider.Position, collider.Position - root.Position)
+				end)
+				if ok then wzAttackMethod = 3; return true end
+			end
 		end
 	end
 	
+	-- Method 4: Remote AttackTarget:FireServer(mob, pos, atkName)
+	if not wzAttackMethod or wzAttackMethod == 4 then
+		local atkTarget = RS:FindFirstChild("Shared") and RS.Shared:FindFirstChild("Combat") and RS.Shared.Combat:FindFirstChild("AttackTarget")
+		if atkTarget then
+			local ok = pcall(function()
+				atkTarget:FireServer(mob, pos, atkName, "", time())
+			end)
+			if ok then wzAttackMethod = 4; return true end
+		end
+	end
+	
+	return false
+end
+
+local function wzKillAura(Combat, class, attacks)
+	if not Combat or not class or not attacks then return false end
+	local mob, pos, nearest = wzGetMobs()
 	if #mob == 0 then return false end
 	
-	-- Fire AttackBuff for ALL classes (original does this)
+	-- Move to nearest mob
+	if nearest then
+		local collider = nearest:FindFirstChild("Collider") or nearest.PrimaryPart
+		if collider then
+			wzMoveTo(collider.CFrame * CFrame.new(0, 5, 0))
+		end
+	end
+	
+	-- Fire AttackBuff (original fires this for ALL classes)
 	pcall(function()
 		game:GetService("ReplicatedStorage").Shared.Combat.Skillsets.DualWielder.AttackBuff:FireServer()
 	end)
@@ -727,21 +806,11 @@ local function wzKillAura(Combat, class, attacks)
 	-- Cycle through all class attacks
 	for _, atkName in ipairs(attacks) do
 		if not WZState.AutoFarmActive or not Runtime.alive then break end
-		-- Rebuild mob list each attack (mobs may die mid-chain)
-		mob, pos = {}, {}
-		for _, v in ipairs(mobsFolder:GetChildren()) do
-			local collider = v:FindFirstChild("Collider")
-			local hp = v:FindFirstChild("HealthProperties")
-			local hpVal = hp and hp:FindFirstChild("Health")
-			if collider and hpVal and hpVal.Value > 0 then
-				table.insert(mob, v)
-				table.insert(pos, head.Position)
-			end
-		end
+		mob, pos = wzGetMobs() -- rebuild each attack
 		if #mob > 0 then
-			pcall(function()
-				Combat.AttackTargets(nil, mob, pos, atkName)
-			end)
+			wzTryAttack(Combat, mob, pos, atkName, class)
+		else
+			break -- all mobs dead
 		end
 		task.wait(0.2)
 	end
