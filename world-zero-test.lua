@@ -595,16 +595,7 @@ local function getWZClass()
 	return nil
 end
 
-local function wzDisableChecks(Combat)
-	pcall(function()
-		local ev = Combat:GetAttackEvent()
-		if not ev or ev:GetAttribute("ZG_Bypassed") then return end
-		for _, conn in ipairs(getconnections(ev.OnClientEvent)) do
-			pcall(function() conn:Disable() end)
-		end
-		ev:SetAttribute("ZG_Bypassed", true)
-	end)
-end
+-- (Combat event bypass removed — input simulation used instead)
 
 local function wzTouch(part)
 	if not part then return end
@@ -726,118 +717,158 @@ local function wzMoveTowardProgress()
 	return false
 end
 
--- Build mob + position tables from workspace.Mobs
-local function wzGetMobs()
+-- VirtualInputManager reference
+local VIM = game:GetService("VirtualInputManager")
+
+-- Simulate a keypress (down + up)
+local function simKey(keyCode)
+	pcall(function()
+		VIM:SendKeyEvent(true,  keyCode, false, game)
+		task.wait(0.07)
+		VIM:SendKeyEvent(false, keyCode, false, game)
+	end)
+end
+
+-- Simulate left mouse click at current cursor/screen centre
+local function simClick()
+	pcall(function()
+		local vp  = workspace.CurrentCamera.ViewportSize
+		local mx, my = vp.X / 2, vp.Y / 2
+		VIM:SendMouseButtonEvent(mx, my, 0, true,  game, 1)
+		task.wait(0.07)
+		VIM:SendMouseButtonEvent(mx, my, 0, false, game, 1)
+	end)
+end
+
+-- WZ skill keys: LMB = normal, E/R = skills, X = Ultimate, 1 = Pet
+local WZ_SKILL_KEYS = {
+	{ type = "mouse" },                       -- Left Click = basic attack
+	{ type = "key", code = Enum.KeyCode.E },  -- E = skill 1
+	{ type = "key", code = Enum.KeyCode.R },  -- R = skill 2
+	{ type = "key", code = Enum.KeyCode.X },  -- X = ultimate
+	{ type = "key", code = Enum.KeyCode.One },-- 1 = pet skill
+}
+
+-- Get nearest alive mob
+local function wzGetNearest()
 	local mobsFolder = workspace:FindFirstChild("Mobs")
 	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	local head = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
-	if not mobsFolder or not root then return {}, {}, nil end
-	local posRef = head or root
-	local mob, pos, nearest, nearDist = {}, {}, nil, math.huge
+	if not mobsFolder or not root then return nil end
+	local nearest, nearDist = nil, math.huge
 	for _, v in ipairs(mobsFolder:GetChildren()) do
-		local collider = v:FindFirstChild("Collider")
-		local hp = v:FindFirstChild("HealthProperties")
-		local hpVal = hp and hp:FindFirstChild("Health")
+		local collider = v:FindFirstChild("Collider") or v.PrimaryPart
+		local hp       = v:FindFirstChild("HealthProperties")
+		local hpVal    = hp and hp:FindFirstChild("Health")
 		if collider and hpVal and hpVal.Value > 0 then
-			table.insert(mob, v)
-			table.insert(pos, posRef.Position)
 			local dist = (collider.Position - root.Position).Magnitude
 			if dist < nearDist then
 				nearDist = dist
-				nearest = v
+				nearest  = { mob = v, collider = collider, dist = dist }
 			end
 		end
 	end
-	return mob, pos, nearest
+	return nearest
 end
 
--- Try all known WZ combat APIs until one works
-local function getWzAttackKey(Combat)
-	local key = ""
-	pcall(function()
-		if Combat.ValidateTargets then
-			local env = getfenv(Combat.ValidateTargets)
-			if env and env.SpendKey then key = env.SpendKey() end
-		end
-	end)
-	return key
+local function hasMobs()
+	return wzGetNearest() ~= nil
 end
 
-local wzAttackMethod = nil
-
-local function wzTryAttack(Combat, mob, pos, atkName, class)
-	local RS = game:GetService("ReplicatedStorage")
-	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	local key = getWzAttackKey(Combat)
-	
-	if not wzAttackMethod or wzAttackMethod == 1 then
-		local ok = pcall(function() Combat.AttackTargets(nil, mob, pos, atkName) end)
-		if ok then wzAttackMethod = 1; return true end
-	end
-	if not wzAttackMethod or wzAttackMethod == 2 then
-		local atkTarget = RS:FindFirstChild("Shared") and RS.Shared:FindFirstChild("Combat") and RS.Shared.Combat:FindFirstChild("AttackTarget")
-		if atkTarget then
-			local ok = pcall(function() atkTarget:FireServer(mob, pos, atkName, key, time()) end)
-			if ok then wzAttackMethod = 2; return true end
-		end
-	end
-	if not wzAttackMethod or wzAttackMethod == 3 then
-		local attackRemote = RS:FindFirstChild("Shared") and RS.Shared:FindFirstChild("Combat") and RS.Shared.Combat:FindFirstChild("Attack")
-		if attackRemote and root and mob[1] then
-			local collider = mob[1]:FindFirstChild("Collider")
-			if collider then
-				local ok = pcall(function() attackRemote:FireServer(atkName, collider.Position, collider.Position - root.Position) end)
-				if ok then wzAttackMethod = 3; return true end
-			end
-		end
-	end
-	return false
+-- Face a CFrame position (so clicks/attacks land correctly)
+local function wzFaceTarget(targetPos)
+	local char = LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+	local dir  = (targetPos - root.Position) * Vector3.new(1, 0, 1)
+	if dir.Magnitude < 0.1 then return end
+	root.CFrame = CFrame.new(root.Position, root.Position + dir)
 end
 
-local function wzKillAura(Combat, class, attacks)
-	if not Combat or not class or not attacks then return false end
-	local mob, pos, nearest = wzGetMobs()
-	if #mob == 0 then return false end
+-- Move to safe position based on class type
+local function wzMoveToTarget(target, class)
+	local char = LocalPlayer.Character
+	if not char then return end
+	local cf = target.collider.CFrame
 	
-	if nearest then
-		local collider = nearest:FindFirstChild("Collider") or nearest.PrimaryPart
-		if collider then
-			wzMoveTo(collider.CFrame, class)
-		end
+	if isRangedClass(class) then
+		-- Hover 28 studs above and looking down
+		local above = cf * CFrame.new(0, 28, 0) * CFrame.Angles(math.rad(-90), 0, 0)
+		char:PivotTo(above)
+		-- Kill vertical velocity so we float
+		pcall(function()
+			local root = char:FindFirstChild("HumanoidRootPart")
+			if root then root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end
+		end)
+	else
+		-- Stand 7 studs beside (behind the mob from its facing)
+		local safe = cf * CFrame.new(0, 2, 7)
+		char:PivotTo(safe)
 	end
+end
+
+-- Input-based kill aura: position → face → spam all keys
+local function wzKillAura(class)
+	if not class then return false end
+	local target = wzGetNearest()
+	if not target then return false end
 	
-	pcall(function()
-		game:GetService("ReplicatedStorage").Shared.Combat.Skillsets.DualWielder.AttackBuff:FireServer()
-	end)
+	wzMoveToTarget(target, class)
+	wzFaceTarget(target.collider.Position)
+	task.wait(0.1) -- let the teleport settle
 	
-	for _, atkName in ipairs(attacks) do
+	-- Spam all three skill inputs in a cycle
+	local cycleCount = 3 -- repeat the LMB+E+R cycle 3 times per farm tick
+	for _ = 1, cycleCount do
 		if not WZState.AutoFarmActive or not Runtime.alive then break end
-		mob, pos = wzGetMobs()
-		if #mob > 0 then
-			wzTryAttack(Combat, mob, pos, atkName, class)
-		else break end
-		task.wait(0.2)
+		if not hasMobs() then break end
+		
+		for _, skill in ipairs(WZ_SKILL_KEYS) do
+			if not WZState.AutoFarmActive then break end
+			if not hasMobs() then break end
+			
+			-- Re-face in case we drifted
+			local t2 = wzGetNearest()
+			if t2 then wzFaceTarget(t2.collider.Position) end
+			
+			if skill.type == "mouse" then
+				simClick()
+			elseif skill.type == "key" then
+				simKey(skill.code)
+			end
+			task.wait(0.25)
+		end
 	end
 	return true
 end
 
--- Auto-farm loop: killAura + mission + movement
+-- Keep ranged classes floating while auto-farm is on
+RootJanitor.connect(RunService.Heartbeat, function()
+	if not WZState.AutoFarmActive then return end
+	local class = getWZClass()
+	if not class or not isRangedClass(class) then return end
+	local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if root then
+		local vel = root.AssemblyLinearVelocity
+		if vel.Y < -2 then
+			root.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
+		end
+	end
+end)
+
+-- Auto-farm loop: position + keypress attacks + mission handling
 task.spawn(function()
 	while Runtime.alive do
 		if not WZState.AutoFarmActive then
 			task.wait(0.25)
 		else
-			local Combat = getWZCombat()
-			local class  = getWZClass()
-			local attacks = class and WZClasses[class]
-			if Combat and class and attacks then
-				wzDisableChecks(Combat)
-				local attacked = wzKillAura(Combat, class, attacks)
+			local class = getWZClass()
+			if class then
+				local attacked = wzKillAura(class)
 				if not attacked then
 					wzHandleMissionObjects()
 					wzMoveTowardProgress()
+					task.wait(0.5)
 				end
-				task.wait(0.5)
 			else
 				task.wait(1)
 			end
