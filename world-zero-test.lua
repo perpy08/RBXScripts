@@ -1202,15 +1202,25 @@ RootJanitor.add(PanelGui)
 PanelGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 -- auto-reload across teleports (Dungeons/Lobby)
+-- IMPORTANT: This fetches YOUR GitHub file. You MUST save this
+-- refined code to: perpy08/RBXScripts/main/world-zero-test.lua
+-- Otherwise it will load the old version on teleport!
 if queue_on_teleport then
 	queue_on_teleport([[
 		repeat task.wait() until game:IsLoaded()
-		task.wait(2)
+		task.wait(3)
+		-- Wipe any leftover from a previous script version
+		if _G.__ZenGlitchJanitor then
+			pcall(function() _G.__ZenGlitchJanitor.clean() end)
+			_G.__ZenGlitchJanitor = nil
+		end
 		local url = "https://raw.githubusercontent.com/perpy08/RBXScripts/main/world-zero-test.lua"
 		local ok, res = pcall(game.HttpGet, game, url)
-		if ok then
+		if ok and res then
 			local func = loadstring(res)
 			if func then func() end
+		else
+			warn("[ZenGlitch] Failed to fetch world-zero-test.lua from GitHub")
 		end
 	]])
 end
