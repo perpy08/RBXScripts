@@ -1538,9 +1538,19 @@ local function isTargetAlive(part)
 	return hum and hum.Health > 0
 end
 
--- Autolock: Only active when RMB is held
+-- Autolock via relative mouse-move simulation (works through the real input pipeline,
+-- so the game's own camera controller picks it up — unlike direct CFrame writes)
+local VIM_FPS = game:GetService("VirtualInputManager")
+local AUTOLOCK_SENS = 0.18   -- fraction of the pixel delta applied per frame
+local AUTOLOCK_MAXSTEP = 120 -- max pixels per frame to avoid wild snaps
+
 RootJanitor.connect(RunService.RenderStepped, function()
-	if not FPSState.AutoLockActive or not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+	if not FPSState.AutoLockActive then
+		lockedTarget = nil
+		return
+	end
+	-- Only lock while RMB (aim/scope) is held
+	if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
 		lockedTarget = nil
 		return
 	end
@@ -1548,11 +1558,36 @@ RootJanitor.connect(RunService.RenderStepped, function()
 	if not isTargetAlive(lockedTarget) then
 		lockedTarget = findLockTarget()
 	end
-	
-	if lockedTarget then
-		local cam = workspace.CurrentCamera
-		cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, lockedTarget.Position), 0.25)
-	end
+	if not lockedTarget then return end
+
+	local cam = workspace.CurrentCamera
+	local vp  = cam.ViewportSize
+	local cx, cy = vp.X / 2, vp.Y / 2
+
+	-- Project target part to screen (this is the same math ESP uses)
+	local screenPos, onScreen = cam:WorldToViewportPoint(lockedTarget.Position)
+	if not onScreen then return end
+
+	-- Pixel delta from crosshair centre to target
+	local dx = screenPos.X - cx
+	local dy = screenPos.Y - cy
+
+	-- Apply sensitivity + clamp so we don't overshoot
+	local stepX = math.clamp(dx * AUTOLOCK_SENS, -AUTOLOCK_MAXSTEP, AUTOLOCK_MAXSTEP)
+	local stepY = math.clamp(dy * AUTOLOCK_SENS, -AUTOLOCK_MAXSTEP, AUTOLOCK_MAXSTEP)
+
+	-- If we're already basically on target, do nothing
+	if math.abs(dx) < 2 and math.abs(dy) < 2 then return end
+
+	-- Send relative mouse move — the game reads this as real mouse input
+	pcall(function()
+		VIM_FPS:SendMouseMoveEvent(stepX, stepY, game)
+	end)
+
+	-- Backup: also nudge the camera directly in case the game ignores VIM deltas
+	pcall(function()
+		cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, lockedTarget.Position), 0.12)
+	end)
 end)
 
 -- ── FPS TAB UI ──────────────────────────────────────────────────────
@@ -1662,12 +1697,12 @@ end)
 
 -- Hint label
 new("TextLabel", {
-	Size = UDim2.new(1, 0, 0, 14),
+	Size = UDim2.new(1, 0, 0, 24),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
 	TextColor3 = THEME.dim,
-	Text = "smooth tracking · re-locks when target dies",
+	Text = "hold RMB to lock · releases when you let go",
 }, fpsPage)
 
 -- boot ---------------------------------------------------------------------
