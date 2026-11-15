@@ -38,7 +38,7 @@ local Config = {
 
 -- Settings persistence via writefile/readfile (survives teleports reliably)
 local HttpService = game:GetService("HttpService")
-local SAVE_FILE = "ZenGlitch_config.json"
+local SAVE_FILE = "ZenGlitch_FPS.json"
 
 local function loadSavedSettings()
 	local ok, data = pcall(function() return readfile(SAVE_FILE) end)
@@ -501,22 +501,10 @@ end
 -- =====================================================================
 --  7 · WORLD//ZERO AUTOFARM LOGIC
 -- =====================================================================
-local WZState = {
-	AutoFarmActive     = false,
-	NoClipActive       = false,
-	CoinCollectActive  = false,
-	HideDmgNums        = false,
-}
-if _saved and _saved.WZState then
-	for k, v in pairs(_saved.WZState) do WZState[k] = v end
-end
-
-local WZRunning = { autofarm = false }
-
 -- Auto-save settings to disk every 5s
 local function saveSettings()
 	pcall(function()
-		local data = HttpService:JSONEncode({ State = State, WZState = WZState })
+		local data = HttpService:JSONEncode({ State = State, FPSState = FPSState })
 		writefile(SAVE_FILE, data)
 	end)
 end
@@ -1190,18 +1178,16 @@ local function makeTabPage()
 end
 
 local miscPage = makeTabPage()
-local wzPage   = makeTabPage()
 local fpsPage  = makeTabPage()
 miscPage.Visible = true
 miscPage.Position = UDim2.fromOffset(0, 72)
-wzPage.Position   = UDim2.fromOffset(0, 72)
 fpsPage.Position  = UDim2.fromOffset(0, 72)
 
 -- ── tab button factory ───────────────────────────────────────────────
 local tabBtns = {}
 local function makeTab(label, id, page, accentColor)
 	local btn = new("TextButton", {
-		Size = UDim2.new(0.333, 0, 1, 0),
+		Size = UDim2.new(0.5, 0, 1, 0),
 		BackgroundColor3 = (id == activeTab) and THEME.bg or THEME.panel2,
 		TextColor3 = (id == activeTab) and accentColor or THEME.dim,
 		Font = Enum.Font.GothamBold,
@@ -1234,7 +1220,6 @@ local function makeTab(label, id, page, accentColor)
 end
 
 makeTab(" MISC", "misc", miscPage, THEME.accent)
-makeTab(" WZ", "wz", wzPage, THEME.wzblue)
 makeTab(" FPS", "fps", fpsPage, Color3.fromRGB(255, 180, 60))
 
 -- ── widget factories (write to a specific page) ──────────────────────
@@ -1427,50 +1412,7 @@ new("TextLabel", {
 	TextColor3 = THEME.dim, Text = "ALT/RShift toggle · × unload",
 }, miscPage)
 
--- ── WORLD//ZERO tab wiring ───────────────────────────────────────────
-addSectionLabel("tower autofarm", wzPage)
-addToggle("auto farm", function() return WZState.AutoFarmActive end, function(v) WZState.AutoFarmActive = v end, wzPage, THEME.wzblue)
-
-addSectionLabel("utility", wzPage)
-addToggle("noclip",         function() return WZState.NoClipActive end,     function(v) WZState.NoClipActive = v end,     wzPage, THEME.wzblue)
-addToggle("coin collector", function() return WZState.CoinCollectActive end, function(v) setCoinCollect(v) end,            wzPage, THEME.wzblue)
-addToggle("hide dmg nums",  function() return WZState.HideDmgNums end,       function(v) WZState.HideDmgNums = v end,      wzPage, THEME.wzblue)
-
--- detected class display
-local classDisplay = new("TextLabel", {
-	Size = UDim2.new(1, 0, 0, 24),
-	BackgroundColor3 = THEME.panel,
-	BorderSizePixel = 0,
-	Font = Enum.Font.GothamMedium,
-	TextSize = 11,
-	TextColor3 = THEME.dim,
-	Text = "class: detecting…",
-	BackgroundTransparency = 0,
-}, wzPage)
-new("UICorner", { CornerRadius = UDim.new(0, 8) }, classDisplay)
-
-task.spawn(function()
-	while Runtime.alive do
-		local cls = getWZClass()
-		if cls then
-			classDisplay.Text = "class: " .. cls
-			classDisplay.TextColor3 = THEME.wzblue
-		else
-			classDisplay.Text = "class: not detected"
-			classDisplay.TextColor3 = THEME.dim
-		end
-		task.wait(3)
-	end
-end)
-
-new("TextLabel", {
-	Size = UDim2.new(1, 0, 0, 24),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.Gotham,
-	TextSize = 10,
-	TextColor3 = THEME.dim,
-	Text = "Tower AutoFarm v2 · Prison & Atlantis Tower",
-}, wzPage)
+-- (WZ tab wiring removed)
 
 -- dragging -----------------------------------------------------------------
 local dragging = false
@@ -1510,7 +1452,6 @@ minBtn.MouseButton1Click:Connect(function()
 	collapsed = not collapsed
 	tabBar.Visible   = not collapsed
 	miscPage.Visible = not collapsed and (activeTab == "misc")
-	wzPage.Visible   = not collapsed and (activeTab == "wz")
 	fpsPage.Visible  = not collapsed and (activeTab == "fps")
 	minBtn.Text = collapsed and "+" or "–"
 end)
@@ -1536,67 +1477,54 @@ local FPSState = {
 	LockToHead       = false,
 	TargetType       = "Players", -- "Players" | "Mobs"
 }
+if _saved and _saved.FPSState then
+	for k, v in pairs(_saved.FPSState) do FPSState[k] = v end
+end
 
-local AUTOLOCK_FOV     = 180  -- degrees, full screen
-local AUTOLOCK_MAXDIST = 500  -- studs
-local lockedTarget     = nil  -- current locked BasePart
+local AUTOLOCK_MAXDIST = 600
+local lockedTarget     = nil
 
--- Find closest enemy target (player HumanoidRootPart or Head, or mob Collider)
 local function findLockTarget()
 	local cam  = workspace.CurrentCamera
 	local vp   = cam.ViewportSize
 	local cx, cy = vp.X / 2, vp.Y / 2
 	local best, bestDist = nil, math.huge
 
+	local function check(char)
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 then return end
+
+		local part = (FPSState.LockToHead and char:FindFirstChild("Head")) or char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+		if not part then return end
+
+		local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
+		if not onScreen then return end
+
+		local dist3D = (part.Position - cam.CFrame.Position).Magnitude
+		if dist3D > AUTOLOCK_MAXDIST then return end
+
+		local dx, dy = screenPos.X - cx, screenPos.Y - cy
+		local screenDist = math.sqrt(dx*dx + dy*dy)
+		
+		-- FOV check (optional, here we use center distance)
+		if screenDist < bestDist then
+			bestDist = screenDist
+			best = part
+		end
+	end
+
 	if FPSState.TargetType == "Players" then
-		for _, player in ipairs(Players:GetPlayers()) do
-			if player == LocalPlayer then continue end
-			local char = player.Character
-			local hum  = char and char:FindFirstChildOfClass("Humanoid")
-			if not char or not hum or hum.Health <= 0 then continue end
-
-			local part = FPSState.LockToHead and char:FindFirstChild("Head")
-			              or char:FindFirstChild("HumanoidRootPart")
-			if not part then continue end
-
-			local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
-			if not onScreen then continue end
-
-			local dist3D = (part.Position - cam.CFrame.Position).Magnitude
-			if dist3D > AUTOLOCK_MAXDIST then continue end
-
-			local dx, dy = screenPos.X - cx, screenPos.Y - cy
-			local screenDist = math.sqrt(dx*dx + dy*dy)
-			if screenDist < bestDist then
-				bestDist = screenDist
-				best = part
-			end
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= LocalPlayer and p.Character then check(p.Character) end
 		end
 	else
-		-- Mobs (workspace.Mobs or any humanoid NPC)
-		local mobFolders = {workspace:FindFirstChild("Mobs"), workspace}
-		for _, folder in ipairs(mobFolders) do
-			if not folder then continue end
-			for _, mob in ipairs(folder:GetChildren()) do
-				if Players:GetPlayerFromCharacter(mob) then continue end
-				local hum  = mob:FindFirstChildOfClass("Humanoid")
-				if not hum or hum.Health <= 0 then continue end
-
-				local head = FPSState.LockToHead and mob:FindFirstChild("Head")
-				local part = head or mob:FindFirstChild("Collider") or mob:FindFirstChild("HumanoidRootPart") or mob.PrimaryPart
-				if not part then continue end
-
-				local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
-				if not onScreen then continue end
-
-				local dist3D = (part.Position - cam.CFrame.Position).Magnitude
-				if dist3D > AUTOLOCK_MAXDIST then continue end
-
-				local dx, dy = screenPos.X - cx, screenPos.Y - cy
-				local screenDist = math.sqrt(dx*dx + dy*dy)
-				if screenDist < bestDist then
-					bestDist = screenDist
-					best = part
+		local mobs = workspace:FindFirstChild("Mobs")
+		if mobs then
+			for _, m in ipairs(mobs:GetChildren()) do check(m) end
+		else
+			for _, m in ipairs(workspace:GetChildren()) do
+				if m:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(m) then
+					check(m)
 				end
 			end
 		end
@@ -1604,31 +1532,27 @@ local function findLockTarget()
 	return best
 end
 
--- Validate that a locked target is still alive
 local function isTargetAlive(part)
 	if not part or not part.Parent then return false end
-	local hum = part.Parent:FindFirstChildOfClass("Humanoid")
-	          or (part.Parent.Parent and part.Parent.Parent:FindFirstChildOfClass("Humanoid"))
+	local hum = part.Parent:FindFirstChildOfClass("Humanoid") or (part.Parent.Parent and part.Parent.Parent:FindFirstChildOfClass("Humanoid"))
 	return hum and hum.Health > 0
 end
 
--- Autolock Heartbeat: smoothly aim camera at the target
+-- Autolock: Only active when RMB is held
 RootJanitor.connect(RunService.RenderStepped, function()
-	if not FPSState.AutoLockActive then
+	if not FPSState.AutoLockActive or not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
 		lockedTarget = nil
 		return
 	end
 
-	-- Re-acquire if dead or gone
 	if not isTargetAlive(lockedTarget) then
 		lockedTarget = findLockTarget()
 	end
-	if not lockedTarget then return end
-
-	local cam = workspace.CurrentCamera
-	local targetPos = lockedTarget.Position
-	-- Smooth lerp to avoid jarring snaps (0.35 = tracking speed)
-	cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, targetPos), 0.35)
+	
+	if lockedTarget then
+		local cam = workspace.CurrentCamera
+		cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, lockedTarget.Position), 0.25)
+	end
 end)
 
 -- ── FPS TAB UI ──────────────────────────────────────────────────────
@@ -1750,26 +1674,22 @@ new("TextLabel", {
 RootJanitor.add(PanelGui)
 PanelGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
--- auto-reload across teleports (Dungeons/Lobby)
+-- auto-reload across teleports
 -- IMPORTANT: This fetches YOUR GitHub file. You MUST save this
--- refined code to: perpy08/RBXScripts/main/world-zero-test.lua
--- Otherwise it will load the old version on teleport!
+-- refined code to: perpy08/RBXScripts/main/Univ-FPS.lua
 if queue_on_teleport then
 	queue_on_teleport([[
 		repeat task.wait() until game:IsLoaded()
 		task.wait(3)
-		-- Wipe any leftover from a previous script version
 		if _G.__ZenGlitchJanitor then
 			pcall(function() _G.__ZenGlitchJanitor.clean() end)
 			_G.__ZenGlitchJanitor = nil
 		end
-		local url = "https://raw.githubusercontent.com/perpy08/RBXScripts/main/world-zero-test.lua"
+		local url = "https://raw.githubusercontent.com/perpy08/RBXScripts/main/Univ-FPS.lua"
 		local ok, res = pcall(game.HttpGet, game, url)
 		if ok and res then
 			local func = loadstring(res)
 			if func then func() end
-		else
-			warn("[ZenGlitch] Failed to fetch world-zero-test.lua from GitHub")
 		end
 	]])
 end
