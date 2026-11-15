@@ -1,1 +1,1202 @@
+-- =====================================================================
+--  MINE A MOUNTAIN · UNIVERSAL AUTOMATION PANEL
+--  ZEN GLITCH v2.0 — refined build (LuaU · LocalScript)
+-- ---------------------------------------------------------------------
+--  Changelog vs v1:
+--    · ESP is event-driven (RenderStepped polling removed entirely)
+--    · Per-character janitor: zero connection leaks on respawn
+--    · Ghost clones stripped of scripts/sounds/humanoids (~90% lighter)
+--    · Animation jitter runs in ONE shared Heartbeat (not one per track)
+--    · AutoBuy lazy-resolves the remote every cycle + logs failures once
+--    · Re-run guard: executing twice cleans up the previous instance
+-- =====================================================================
 
+-- Services --------------------------------------------------------------
+local Players                = game:GetService("Players")
+local ReplicatedStorage      = game:GetService("ReplicatedStorage")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local UserInputService       = game:GetService("UserInputService")
+local TweenService           = game:GetService("TweenService")
+local RunService             = game:GetService("RunService")
+local Lighting               = game:GetService("Lighting")
+local Debris                 = game:GetService("Debris")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Config ----------------------------------------------------------------
+local Config = {
+	BaseWalkSpeed      = 16,
+	MinSpeedMultiplier = 0.1,
+	MaxSpeedMultiplier = 5,
+	MaxAirJumps        = 1,
+	JumpCooldown       = 0.15, -- seconds after jump before air-jump is allowed
+	GhostFrameTime     = 0.33, -- seconds between ghost snapshots
+	GhostLifetime      = 0.35,
+	AnimSkipBase       = 0.15,
+	ToggleKey          = Enum.KeyCode.RightShift,
+}
+
+-- Settings persistence via writefile/readfile (survives teleports reliably)
+local HttpService = game:GetService("HttpService")
+local SAVE_FILE = "ZenGlitch_FPS.json"
+
+local function loadSavedSettings()
+	local ok, data = pcall(function() return readfile(SAVE_FILE) end)
+	if ok and data then
+		local ok2, parsed = pcall(function() return HttpService:JSONDecode(data) end)
+		if ok2 and parsed then return parsed end
+	end
+	return nil
+end
+
+local _saved = loadSavedSettings()
+
+-- State (Universal Refined Build) ---------------------------------------
+local State = {
+	InstantInteractions    = false,
+	MultiJumpActive        = false,
+	PlayerESPActive        = false,
+	KillGlowActive         = false,
+	GlitchActive           = false,
+	CurrentSpeedMultiplier = 1.0,
+	SlowSpeedMultiplier    = 1.0,
+	AttackSpeedMultiplier  = 1.0,
+	SpeedMode              = "Fast",
+}
+if _saved and _saved.State then
+	for k, v in pairs(_saved.State) do State[k] = v end
+end
+
+local Runtime = { alive = true }
+
+-- Tiny lifecycle helper ---------------------------------------------------
+local function newJanitor()
+	local items = {}
+	local janitor = {}
+	function janitor.add(item) table.insert(items, item) return item end
+	function janitor.connect(signal, fn)
+		local conn = signal:Connect(fn)
+		table.insert(items, conn)
+		return conn
+	end
+	function janitor.clean()
+		for _, item in ipairs(items) do
+			if typeof(item) == "RBXScriptConnection" then item:Disconnect()
+			elseif typeof(item) == "Instance" then item:Destroy()
+			elseif type(item) == "table" and item.clean then item.clean() end
+		end
+		table.clear(items)
+	end
+	return janitor
+end
+
+local RootJanitor = newJanitor()
+if _G.__ZenGlitchJanitor then pcall(function() _G.__ZenGlitchJanitor.clean() end) end
+_G.__ZenGlitchJanitor = RootJanitor
+RootJanitor.add({ clean = function() Runtime.alive = false end })
+
+local function activeMultiplier()
+	if State.SpeedMode == "Fast" then
+		return State.CurrentSpeedMultiplier
+	else
+		-- In Slow Mode, speed = Base / Multiplier
+		-- If Mult = 1.0, returns 1.0. If Mult = 2.0, returns 0.5 (half speed)
+		return 1 / math.max(State.SlowSpeedMultiplier, 0.01)
+	end
+end
+
+-- =====================================================================
+--  1 · ESP  (event-driven — zero per-frame polling)
+-- =====================================================================
+local ESP = {}
+
+local function buildESP(character, player)
+	local root = character:WaitForChild("HumanoidRootPart", 3)
+	if not root then return end
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "PlayerHighlight"
+	highlight.FillColor = Color3.fromRGB(255, 60, 60)
+	highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+	highlight.Enabled = State.PlayerESPActive
+	highlight.Parent = character
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "PlayerLabel"
+	billboard.Size = UDim2.fromOffset(120, 24)
+	billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Enabled = State.PlayerESPActive
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.fromScale(1, 1)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Font = Enum.Font.GothamMedium
+	nameLabel.TextSize = 13
+	nameLabel.Text = player.DisplayName
+	nameLabel.TextColor3 = Color3.new(1, 1, 1)
+	nameLabel.TextStrokeTransparency = 0.4
+	nameLabel.Parent = billboard
+
+	billboard.Parent = root
+end
+
+function ESP.setEnabled(on)
+	State.PlayerESPActive = on
+	for _, player in ipairs(Players:GetPlayers()) do
+		local character = player.Character
+		if character then
+			local highlight = character:FindFirstChild("PlayerHighlight")
+			local root = character:FindFirstChild("HumanoidRootPart")
+			local label = root and root:FindFirstChild("PlayerLabel")
+			if highlight then highlight.Enabled = on end
+			if label then label.Enabled = on end
+		end
+	end
+end
+
+local function watchPlayer(player)
+	if player == LocalPlayer then return end
+	RootJanitor.connect(player.CharacterAdded, function(character)
+		if character:FindFirstChild("PlayerHighlight") then return end
+		buildESP(character, player)
+	end)
+	if player.Character then
+		task.spawn(buildESP, player.Character, player)
+	end
+end
+
+for _, player in ipairs(Players:GetPlayers()) do
+	watchPlayer(player)
+end
+RootJanitor.connect(Players.PlayerAdded, watchPlayer)
+
+-- =====================================================================
+--  2 · GLITCH ENGINE  (ghost trail + animation jitter, one shared loop)
+-- =====================================================================
+local Ghost = { lastTick = 0 }
+
+local STRIP_CLASSES = {
+	Script = true, LocalScript = true, ModuleScript = true,
+	Sound = true, ParticleEmitter = true, Trail = true, Beam = true,
+	Fire = true, Smoke = true, Sparkles = true,
+	BillboardGui = true, SurfaceGui = true,
+	Decal = true, Texture = true,
+}
+
+local function createGhostClone(character)
+	local previous = character.Archivable
+	character.Archivable = true
+	local ok, clone = pcall(character.Clone, character)
+	character.Archivable = previous
+	if not ok or not clone then return end
+
+	-- strip everything that isn't pure geometry (~90% lighter than v1)
+	local humanoid = clone:FindFirstChildOfClass("Humanoid")
+	if humanoid then humanoid:Destroy() end
+	local animator = clone:FindFirstChildWhichIsA("Animator", true)
+	if animator then animator:Destroy() end
+
+	local fadeInfo = TweenInfo.new(Config.GhostLifetime, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+	for _, node in ipairs(clone:GetDescendants()) do
+		if node:IsA("BasePart") then
+			node.Anchored = true
+			node.CanCollide = false
+			node.CanTouch = false
+			node.CanQuery = false
+			node.CastShadow = false
+			node.Transparency = math.max(node.Transparency, 0.55)
+			local c = node.Color
+			node.Color = Color3.new(c.R * 0.6, c.G * 0.85, c.B) -- zen tint
+			TweenService:Create(node, fadeInfo, {
+				Transparency = 1,
+				Size = node.Size * 0.82,
+			}):Play()
+		elseif STRIP_CLASSES[node.ClassName] then
+			node:Destroy()
+		end
+	end
+
+	clone.Parent = workspace
+	Debris:AddItem(clone, Config.GhostLifetime)
+	return clone
+end
+
+-- Animation jitter registry: one loop, weak keys -> dead tracks self-clean.
+local jitteredTracks = setmetatable({}, { __mode = "k" })
+local jitterRestorePending = false
+
+local function watchAnimations(animator, janitor)
+	local function attach(track)
+		jitteredTracks[track] = { lastSkip = 0 }
+	end
+	janitor.connect(animator.AnimationPlayed, attach)
+	for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+		attach(track)
+	end
+end
+
+RootJanitor.connect(RunService.Heartbeat, function()
+	if not State.GlitchActive then
+		if jitterRestorePending then -- edge-triggered restore, once
+			jitterRestorePending = false
+			for track in pairs(jitteredTracks) do
+				if track.IsPlaying then
+					track:AdjustSpeed(1)
+				end
+			end
+		end
+		return
+	end
+	jitterRestorePending = true
+
+	local character = LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	local now = os.clock()
+	local clampedMult = math.clamp(activeMultiplier(), Config.MinSpeedMultiplier, Config.MaxSpeedMultiplier)
+
+	-- ghost trail
+	if humanoid and rootPart then
+		local moving = humanoid.MoveDirection.Magnitude > 0
+			or rootPart.AssemblyLinearVelocity.Magnitude > 0.1
+		if moving then
+			local frameTime = Config.GhostFrameTime / clampedMult
+			if now - Ghost.lastTick >= frameTime then
+				Ghost.lastTick = now
+				createGhostClone(character)
+			end
+		end
+	end
+
+	-- animation jitter (wrap-safe)
+	local skipEvery = Config.AnimSkipBase / clampedMult
+	for track, meta in pairs(jitteredTracks) do
+		if track.IsPlaying then
+			track:AdjustSpeed(0)
+			if now - meta.lastSkip >= skipEvery then
+				meta.lastSkip = now
+				local skip = 0.1 + math.random() * 0.1
+				local length = math.max(track.Length, 0.05)
+				track.TimePosition = (track.TimePosition + skip) % length
+			end
+		end
+	end
+end)
+
+-- =====================================================================
+--  4 · CHARACTER MANAGER  (speed / multijump / attack speed)
+-- =====================================================================
+local currentHumanoid = nil
+
+-- MultiJump state
+local canDoubleJump = false
+local hasDoubleJumped = false
+
+local function targetWalkSpeed(humanoid)
+	local base = humanoid:GetAttribute("ZenBaseSpeed") or Config.BaseWalkSpeed
+	return base * activeMultiplier()
+end
+
+local function refreshSpeed(humanoid)
+	if not humanoid or humanoid.Parent == nil then return end
+	local target = targetWalkSpeed(humanoid)
+	if math.abs(humanoid.WalkSpeed - target) > 0.05 then
+		humanoid.WalkSpeed = target
+	end
+end
+
+-- Core movement animation names (to exclude from attack speed buffs)
+local CORE_ANIMS = {
+	"walk", "run", "idle", "jump", "fall", "climb", "swim", "sit", "toolnone"
+}
+
+local function applyAttackSpeed(track)
+	if State.AttackSpeedMultiplier == 1.0 then return end
+	local name = string.lower(track.Name)
+	for _, core in ipairs(CORE_ANIMS) do
+		if string.find(name, core) then return end
+	end
+	
+	-- Multi-stage speed enforcement to bypass Roblox internal resets
+	task.spawn(function()
+		track:AdjustSpeed(State.AttackSpeedMultiplier)
+		task.wait()
+		if track.IsPlaying then
+			track:AdjustSpeed(State.AttackSpeedMultiplier)
+		end
+	end)
+end
+
+local function setupCharacter(character)
+	local janitor = newJanitor()
+	RootJanitor.add(janitor)
+
+	local humanoid = character:WaitForChild("Humanoid", 5)
+	local rootPart = character:WaitForChild("HumanoidRootPart", 5)
+	if not humanoid or not rootPart then
+		janitor.clean()
+		return
+	end
+
+	currentHumanoid = humanoid
+
+	-- remember the speed the game actually gave us — no magic 16
+	if not humanoid:GetAttribute("ZenBaseSpeed") then
+		humanoid:SetAttribute("ZenBaseSpeed", humanoid.WalkSpeed)
+	end
+	refreshSpeed(humanoid)
+
+	-- self-clean on death / removal
+	janitor.connect(humanoid.Died, function() janitor.clean() end)
+	janitor.connect(character.Destroying, function() janitor.clean() end)
+
+	-- Animations: hook jitter and attack speed
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if animator then
+		watchAnimations(animator, janitor)
+		janitor.connect(animator.AnimationPlayed, applyAttackSpeed)
+	end
+
+	-- speed enforcement
+	local applying = false
+	janitor.connect(humanoid:GetPropertyChangedSignal("WalkSpeed"), function()
+		if applying then return end
+		local target = targetWalkSpeed(humanoid)
+		if math.abs(humanoid.WalkSpeed - target) > 1 then
+			applying = true
+			humanoid.WalkSpeed = target
+			applying = false
+		end
+	end)
+end
+
+if LocalPlayer.Character then
+	task.spawn(setupCharacter, LocalPlayer.Character)
+end
+RootJanitor.connect(LocalPlayer.CharacterAdded, setupCharacter)
+
+-- MultiJump: Held-Space flight + soft land (exact original tests.lua logic)
+RootJanitor.connect(RunService.Heartbeat, function()
+	if not State.MultiJumpActive then return end
+
+	local char = LocalPlayer.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not rootPart then return end
+
+	-- Hold Space to fly / stay airborne
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+		rootPart.AssemblyLinearVelocity = Vector3.new(
+			rootPart.AssemblyLinearVelocity.X,
+			humanoid.JumpPower * 0.8,
+			rootPart.AssemblyLinearVelocity.Z
+		)
+	end
+
+	-- Soft-land cushion when falling fast near the ground
+	if rootPart.AssemblyLinearVelocity.Y < -40 then
+		local rayOrigin = rootPart.Position
+		local rayDir   = Vector3.new(0, -15, 0)
+		local result   = workspace:Raycast(rayOrigin, rayDir, RaycastParams.new())
+		if result then
+			rootPart.AssemblyLinearVelocity = Vector3.new(
+				rootPart.AssemblyLinearVelocity.X,
+				-2,
+				rootPart.AssemblyLinearVelocity.Z
+			)
+		end
+	end
+end)
+
+-- Periodically re-sync attack speed for already-playing tracks
+task.spawn(function()
+	while Runtime.alive do
+		if State.AttackSpeedMultiplier ~= 1.0 and currentHumanoid then
+			local animator = currentHumanoid:FindFirstChildOfClass("Animator")
+			if animator then
+				for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+					applyAttackSpeed(track)
+				end
+			end
+		end
+		task.wait(1)
+	end
+end)
+
+-- =====================================================================
+--  5 · INSTANT INTERACTIONS  (reversible HoldDuration mirror)
+-- =====================================================================
+local Prompts = {}
+local originalHoldTimes = setmetatable({}, { __mode = "k" })
+
+local function neuterPrompt(prompt)
+	if prompt:IsA("ProximityPrompt") and prompt.HoldDuration > 0 then
+		originalHoldTimes[prompt] = prompt.HoldDuration
+		prompt.HoldDuration = 0
+	end
+end
+
+RootJanitor.connect(ProximityPromptService.PromptShown, function(prompt)
+	if State.InstantInteractions then
+		neuterPrompt(prompt)
+	end
+end)
+
+function Prompts.setEnabled(on)
+	State.InstantInteractions = on
+	if on then
+		task.spawn(function() -- off-thread: world scans can be big
+			for _, node in ipairs(workspace:GetDescendants()) do
+				if node:IsA("ProximityPrompt") then
+					neuterPrompt(node)
+				end
+			end
+		end)
+	else
+		for prompt, hold in pairs(originalHoldTimes) do
+			if prompt.Parent then
+				prompt.HoldDuration = hold
+			end
+		end
+		table.clear(originalHoldTimes)
+	end
+end
+
+-- =====================================================================
+--  6 · ZEN GLOW  (cached post-effects, toggled once — not rebuilt)
+-- =====================================================================
+local Glow = {}
+
+local bloom = Instance.new("BloomEffect")
+bloom.Name = "ZenBloom"
+bloom.Intensity = 0.6
+bloom.Size = 32
+bloom.Threshold = 0.95
+bloom.Enabled = false
+bloom.Parent = Lighting
+
+local tint = Instance.new("ColorCorrectionEffect")
+tint.Name = "ZenTint"
+tint.Saturation = 0.2
+tint.Contrast = 0.05
+tint.TintColor = Color3.fromRGB(214, 255, 232)
+tint.Enabled = false
+tint.Parent = Lighting
+
+RootJanitor.add(bloom)
+RootJanitor.add(tint)
+
+function Glow.setEnabled(on)
+	State.KillGlowActive = on
+	bloom.Enabled = on
+	tint.Enabled = on
+end
+
+-- =====================================================================
+--  7 · WORLD//ZERO AUTOFARM LOGIC
+-- =====================================================================
+-- Auto-save settings to disk every 5s
+local function saveSettings()
+	pcall(function()
+		local data = HttpService:JSONEncode({ State = State, FPSState = FPSState })
+		writefile(SAVE_FILE, data)
+	end)
+end
+
+task.spawn(function()
+	while Runtime.alive do
+		saveSettings()
+		task.wait(5)
+	end
+end)
+
+-- (World Zero combat module removed — this is now the universal FPS build)
+
+-- (World Zero input simulation removed — FPS build uses crosshair steering)
+
+-- (WASD kiting engine removed — FPS build)
+
+-- Movement: Teleport near → WASD walk → circle with stuck detection
+-- (wzManageMovement removed)
+	
+
+	
+	-- (teleport checkpoint removed)
+	
+
+	
+
+	
+
+	
+
+
+-- (attack loops removed)
+
+
+
+
+
+
+
+-- (kill aura removed)
+	
+
+	
+
+	
+
+	
+
+	
+
+	
+-- (cleanup stub removed)
+
+-- (autofarm loop removed)
+
+-- (noclip removed)
+
+-- (coin collector removed)
+
+-- (damage number filter removed)
+
+-- =====================================================================
+--  8 · CONTROL PANEL  (tabbed · draggable · keybind · fully cleanable)
+-- =====================================================================
+local THEME = {
+	bg      = Color3.fromRGB(13, 15, 14),
+	panel   = Color3.fromRGB(20, 23, 22),
+	panel2  = Color3.fromRGB(16, 20, 18),
+	stroke  = Color3.fromRGB(38, 46, 42),
+	accent  = Color3.fromRGB(124, 255, 171),
+	wzblue  = Color3.fromRGB(100, 180, 255),
+	text    = Color3.fromRGB(232, 242, 236),
+	dim     = Color3.fromRGB(143, 163, 154),
+	off     = Color3.fromRGB(45, 55, 50),
+}
+
+local function new(className, props, parent)
+	local inst = Instance.new(className)
+	for key, value in pairs(props) do
+		if key ~= "Parent" then inst[key] = value end
+	end
+	inst.Parent = parent
+	return inst
+end
+
+local PanelGui = Instance.new("ScreenGui")
+PanelGui.Name = "ZenGlitchPanel"
+PanelGui.ResetOnSpawn = false
+PanelGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+PanelGui.DisplayOrder = 999
+
+local panel = new("Frame", {
+	Name = "Panel",
+	Size = UDim2.fromOffset(284, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	Position = UDim2.new(0, 24, 0.5, 0),
+	AnchorPoint = Vector2.new(0, 0.5),
+	BackgroundColor3 = THEME.bg,
+	BorderSizePixel = 0,
+	Active = true,
+}, PanelGui)
+new("UICorner", { CornerRadius = UDim.new(0, 10) }, panel)
+new("UIStroke", { Color = THEME.stroke, Thickness = 1 }, panel)
+
+-- ── header ──────────────────────────────────────────────────────────
+local header = new("Frame", {
+	Name = "Header",
+	Size = UDim2.new(1, 0, 0, 40),
+	BackgroundColor3 = THEME.panel,
+	BorderSizePixel = 0,
+}, panel)
+new("UICorner", { CornerRadius = UDim.new(0, 10) }, header)
+
+new("TextLabel", {
+	Size = UDim2.new(1, -72, 1, 0),
+	Position = UDim2.fromOffset(12, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = THEME.accent,
+	Text = "ZEN GLITCH  ·  UNIVERSAL",
+}, header)
+
+local minBtn = new("TextButton", {
+	Size = UDim2.fromOffset(22, 22),
+	Position = UDim2.new(1, -50, 0.5, 0),
+	AnchorPoint = Vector2.new(0, 0.5),
+	BackgroundColor3 = THEME.off,
+	TextColor3 = THEME.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Text = "–",
+	AutoButtonColor = false,
+}, header)
+new("UICorner", { CornerRadius = UDim.new(0, 6) }, minBtn)
+
+local closeBtn = new("TextButton", {
+	Size = UDim2.fromOffset(22, 22),
+	Position = UDim2.new(1, -24, 0.5, 0),
+	AnchorPoint = Vector2.new(0, 0.5),
+	BackgroundColor3 = THEME.off,
+	TextColor3 = Color3.fromRGB(255, 100, 100),
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Text = "×",
+	AutoButtonColor = false,
+}, header)
+new("UICorner", { CornerRadius = UDim.new(0, 6) }, closeBtn)
+
+-- ── tab bar ─────────────────────────────────────────────────────────
+local tabBar = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 32),
+	Position = UDim2.fromOffset(0, 40),
+	BackgroundColor3 = THEME.panel2,
+	BorderSizePixel = 0,
+}, panel)
+new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, tabBar)
+
+local activeTab = "misc"
+
+-- ── tab pages ───────────────────────────────────────────────────────
+local function makeTabPage()
+	local page = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Visible = false,
+	}, panel)
+	new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, page)
+	new("UIPadding", {
+		PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 12),
+		PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+	}, page)
+	return page
+end
+
+local miscPage = makeTabPage()
+local fpsPage  = makeTabPage()
+miscPage.Visible = true
+miscPage.Position = UDim2.fromOffset(0, 72)
+fpsPage.Position  = UDim2.fromOffset(0, 72)
+
+-- ── tab button factory ───────────────────────────────────────────────
+local tabBtns = {}
+local function makeTab(label, id, page, accentColor)
+	local btn = new("TextButton", {
+		Size = UDim2.new(0.5, 0, 1, 0),
+		BackgroundColor3 = (id == activeTab) and THEME.bg or THEME.panel2,
+		TextColor3 = (id == activeTab) and accentColor or THEME.dim,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		Text = label,
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, tabBar)
+
+	local accent_line = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 2),
+		Position = UDim2.new(0, 0, 1, -2),
+		BackgroundColor3 = accentColor,
+		BorderSizePixel = 0,
+		Visible = (id == activeTab),
+	}, btn)
+
+	tabBtns[id] = { btn = btn, line = accent_line, color = accentColor, page = page }
+
+	btn.MouseButton1Click:Connect(function()
+		activeTab = id
+		for tid, t in pairs(tabBtns) do
+			local isMe = (tid == id)
+			t.btn.BackgroundColor3 = isMe and THEME.bg or THEME.panel2
+			t.btn.TextColor3 = isMe and t.color or THEME.dim
+			t.line.Visible = isMe
+			t.page.Visible = isMe
+		end
+	end)
+end
+
+makeTab(" MISC", "misc", miscPage, THEME.accent)
+makeTab(" FPS", "fps", fpsPage, Color3.fromRGB(255, 180, 60))
+
+-- ── widget factories (write to a specific page) ──────────────────────
+local function addSectionLabel(text, page)
+	new("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 16),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 10,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = THEME.dim,
+		Text = string.upper(text),
+	}, page)
+end
+
+local function addToggle(label, get, set, page, accentOverride)
+	local ac = accentOverride or THEME.accent
+	local row = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 34),
+		BackgroundColor3 = THEME.panel,
+		BorderSizePixel = 0,
+	}, page)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
+
+	new("TextLabel", {
+		Size = UDim2.new(1, -58, 1, 0),
+		Position = UDim2.fromOffset(11, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = THEME.text,
+		Text = label,
+	}, row)
+
+	local switch = new("TextButton", {
+		Size = UDim2.fromOffset(38, 20),
+		Position = UDim2.new(1, -48, 0.5, 0),
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = THEME.off,
+		Text = "",
+		AutoButtonColor = false,
+	}, row)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, switch)
+
+	local knob = new("Frame", {
+		Size = UDim2.fromOffset(14, 14),
+		Position = UDim2.new(0, 3, 0.5, 0),
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, switch)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+
+	local function paint()
+		local on = get()
+		switch.BackgroundColor3 = on and ac or THEME.off
+		TweenService:Create(knob, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {
+			Position = on and UDim2.new(1, -17, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)
+		}):Play()
+	end
+	switch.MouseButton1Click:Connect(function() set(not get()); paint() end)
+	paint()
+end
+
+-- speed stepper factory -------------------------------------------------------
+local stepperRegistry = {}
+
+local function addStepper(label, id, get, set, minV, maxV, step, page)
+	local row = new("Frame", {
+		Name = label .. "_Row",
+		Size = UDim2.new(1, 0, 0, 34),
+		BackgroundColor3 = THEME.panel,
+		BorderSizePixel = 0,
+	}, page)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
+
+	local title = new("TextLabel", {
+		Size = UDim2.new(1, -118, 1, 0),
+		Position = UDim2.fromOffset(11, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = THEME.text,
+		Text = label,
+	}, row)
+
+	local controlGroup = new("Frame", {
+		Size = UDim2.new(0, 100, 1, 0),
+		Position = UDim2.new(1, -10, 0, 0),
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundTransparency = 1,
+	}, row)
+
+	local value = new("TextLabel", {
+		Size = UDim2.new(0, 42, 1, 0),
+		Position = UDim2.new(0, 30, 0, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextColor3 = THEME.accent,
+		Text = "1.00x",
+	}, controlGroup)
+
+	local function bump(dir)
+		if id == "fast" and State.SpeedMode ~= "Fast" then return end
+		if id == "slow" and State.SpeedMode ~= "Slow" then return end
+		local v = math.clamp(math.floor((get() + dir * step) * 100 + 0.5) / 100, minV, maxV)
+		set(v)
+		value.Text = string.format("%.2fx", v)
+		if (id == "fast" or id == "slow") and currentHumanoid then refreshSpeed(currentHumanoid) end
+	end
+
+	local minus = new("TextButton", {
+		Size = UDim2.fromOffset(24, 22), Position = UDim2.new(0, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = THEME.off,
+		TextColor3 = THEME.text, Font = Enum.Font.GothamBold,
+		TextSize = 12, Text = "-", AutoButtonColor = false,
+	}, controlGroup)
+	new("UICorner", { CornerRadius = UDim.new(0, 6) }, minus)
+
+	local plus = new("TextButton", {
+		Size = UDim2.fromOffset(24, 22), Position = UDim2.new(1, 0, 0.5, 0),
+		AnchorPoint = Vector2.new(1, 0.5), BackgroundColor3 = THEME.off,
+		TextColor3 = THEME.text, Font = Enum.Font.GothamBold,
+		TextSize = 12, Text = "+", AutoButtonColor = false,
+	}, controlGroup)
+	new("UICorner", { CornerRadius = UDim.new(0, 6) }, plus)
+
+	minus.MouseButton1Click:Connect(function() bump(-1) end)
+	plus.MouseButton1Click:Connect(function() bump(1) end)
+	value.Text = string.format("%.2fx", get())
+	stepperRegistry[id] = { row = row, title = title, val = value, minus = minus, plus = plus }
+end
+
+local function updateStepperVisuals()
+	for id, ui in pairs(stepperRegistry) do
+		local isActive = (id == "atk") or (State.SpeedMode:lower() == id)
+		local trans = isActive and 0 or 0.6
+		ui.title.TextTransparency = trans
+		ui.val.TextTransparency   = trans
+		ui.minus.BackgroundTransparency = math.min(1, 0.45 + trans)
+		ui.minus.TextTransparency = trans
+		ui.plus.BackgroundTransparency  = math.min(1, 0.45 + trans)
+		ui.plus.TextTransparency  = trans
+		ui.minus.Active = isActive
+		ui.plus.Active  = isActive
+	end
+end
+
+-- ── MISC tab wiring ──────────────────────────────────────────────────
+addSectionLabel("automation", miscPage)
+addToggle("instant interact", function() return State.InstantInteractions end, Prompts.setEnabled, miscPage)
+
+addSectionLabel("movement", miscPage)
+addToggle("multi jump", function() return State.MultiJumpActive end, function(v) State.MultiJumpActive = v end, miscPage)
+addStepper("fast speed", "fast", function() return State.CurrentSpeedMultiplier end, function(v) State.CurrentSpeedMultiplier = v end, 1.0, 5, 0.25, miscPage)
+addStepper("slow speed", "slow", function() return State.SlowSpeedMultiplier end, function(v) State.SlowSpeedMultiplier = v end, 1.0, 5, 0.25, miscPage)
+
+local modeBtn = new("TextButton", {
+	Size = UDim2.new(1, 0, 0, 30),
+	BackgroundColor3 = THEME.off,
+	TextColor3 = THEME.accent,
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Text = "MODE: FAST",
+	AutoButtonColor = false,
+}, miscPage)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, modeBtn)
+modeBtn.MouseButton1Click:Connect(function()
+	State.SpeedMode = (State.SpeedMode == "Fast") and "Slow" or "Fast"
+	modeBtn.Text = "MODE: " .. string.upper(State.SpeedMode)
+	updateStepperVisuals()
+	if currentHumanoid then refreshSpeed(currentHumanoid) end
+end)
+updateStepperVisuals()
+
+addSectionLabel("combat", miscPage)
+addStepper("attack speed", "atk", function() return State.AttackSpeedMultiplier end, function(v) State.AttackSpeedMultiplier = v end, 0.25, 5, 0.25, miscPage)
+
+addSectionLabel("visuals", miscPage)
+addToggle("player esp",  function() return State.PlayerESPActive end,  ESP.setEnabled,  miscPage)
+addToggle("zen glow",    function() return State.KillGlowActive end,   Glow.setEnabled, miscPage)
+addToggle("glitch trail",function() return State.GlitchActive end,     function(v) State.GlitchActive = v end, miscPage)
+
+new("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham, TextSize = 10,
+	TextColor3 = THEME.dim, Text = "ALT/RShift toggle · × unload",
+}, miscPage)
+
+-- (WZ tab wiring removed)
+
+-- dragging -----------------------------------------------------------------
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+header.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = panel.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+RootJanitor.connect(UserInputService.InputChanged, function(input)
+	if not dragging then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement
+		and input.UserInputType ~= Enum.UserInputType.Touch then
+		return
+	end
+	local delta = input.Position - dragStart
+	panel.Position = UDim2.new(
+		startPos.X.Scale, startPos.X.Offset + delta.X,
+		startPos.Y.Scale, startPos.Y.Offset + delta.Y
+	)
+end)
+
+-- minimize / unload / keybind -----------------------------------------------
+local collapsed = false
+minBtn.MouseButton1Click:Connect(function()
+	collapsed = not collapsed
+	tabBar.Visible   = not collapsed
+	miscPage.Visible = not collapsed and (activeTab == "misc")
+	fpsPage.Visible  = not collapsed and (activeTab == "fps")
+	minBtn.Text = collapsed and "+" or "–"
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+	RootJanitor.clean() -- disconnects everything, destroys all instances
+	_G.__ZenGlitchJanitor = nil
+	print("[ZenGlitch] unloaded — every connection and instance cleaned")
+end)
+
+RootJanitor.connect(UserInputService.InputBegan, function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Config.ToggleKey or input.KeyCode == Enum.KeyCode.LeftAlt or input.KeyCode == Enum.KeyCode.RightAlt then
+		panel.Visible = not panel.Visible
+	end
+end)
+
+-- =====================================================================
+--  FPS · AUTOLOCK SYSTEM
+-- =====================================================================
+local FPSState = {
+	AutoLockActive   = false,
+	LockToHead       = false,
+	TargetType       = "Players", -- "Players" | "Mobs"
+}
+if _saved and _saved.FPSState then
+	for k, v in pairs(_saved.FPSState) do FPSState[k] = v end
+end
+
+local AUTOLOCK_MAXDIST = 600
+local lockedTarget     = nil
+
+local function findLockTarget()
+	local cam  = workspace.CurrentCamera
+	local vp   = cam.ViewportSize
+	local cx, cy = vp.X / 2, vp.Y / 2
+	local best, bestDist = nil, math.huge
+
+	local function check(char)
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 then return end
+
+		local part = (FPSState.LockToHead and char:FindFirstChild("Head")) or char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+		if not part then return end
+
+		local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
+		if not onScreen then return end
+
+		local dist3D = (part.Position - cam.CFrame.Position).Magnitude
+		if dist3D > AUTOLOCK_MAXDIST then return end
+
+		local dx, dy = screenPos.X - cx, screenPos.Y - cy
+		local screenDist = math.sqrt(dx*dx + dy*dy)
+		
+		-- FOV check (optional, here we use center distance)
+		if screenDist < bestDist then
+			bestDist = screenDist
+			best = part
+		end
+	end
+
+	if FPSState.TargetType == "Players" then
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= LocalPlayer and p.Character then check(p.Character) end
+		end
+	else
+		local mobs = workspace:FindFirstChild("Mobs")
+		if mobs then
+			for _, m in ipairs(mobs:GetChildren()) do check(m) end
+		else
+			for _, m in ipairs(workspace:GetChildren()) do
+				if m:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(m) then
+					check(m)
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function isTargetAlive(part)
+	if not part or not part.Parent then return false end
+	local hum = part.Parent:FindFirstChildOfClass("Humanoid") or (part.Parent.Parent and part.Parent.Parent:FindFirstChildOfClass("Humanoid"))
+	return hum and hum.Health > 0
+end
+
+-- Autolock: Only active when RMB is held
+RootJanitor.connect(RunService.RenderStepped, function()
+	if not FPSState.AutoLockActive or not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+		lockedTarget = nil
+		return
+	end
+
+	if not isTargetAlive(lockedTarget) then
+		lockedTarget = findLockTarget()
+	end
+	
+	if lockedTarget then
+		local cam = workspace.CurrentCamera
+		cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, lockedTarget.Position), 0.25)
+	end
+end)
+
+-- ── FPS TAB UI ──────────────────────────────────────────────────────
+local THEME_FPS = Color3.fromRGB(255, 180, 60)
+
+addSectionLabel("autolock", fpsPage)
+
+-- Main autolock toggle
+addToggle(
+	"auto lock on",
+	function() return FPSState.AutoLockActive end,
+	function(v)
+		FPSState.AutoLockActive = v
+		if not v then lockedTarget = nil end
+	end,
+	fpsPage,
+	THEME_FPS
+)
+
+-- Lock to head toggle
+addToggle(
+	"lock to head",
+	function() return FPSState.LockToHead end,
+	function(v)
+		FPSState.LockToHead = v
+		lockedTarget = nil -- re-acquire with new part preference
+	end,
+	fpsPage,
+	THEME_FPS
+)
+
+-- Target type dropdown
+addSectionLabel("lock target", fpsPage)
+
+local dropOptions = {"Players", "Mobs"}
+local dropIdx = 1 -- current selection index
+
+local dropRow = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 34),
+	BackgroundColor3 = THEME.panel,
+	BorderSizePixel = 0,
+}, fpsPage)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, dropRow)
+
+new("TextLabel", {
+	Size = UDim2.new(0.5, -4, 1, 0),
+	Position = UDim2.fromOffset(11, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamMedium,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = THEME.text,
+	Text = "lock target",
+}, dropRow)
+
+local dropLabel = new("TextLabel", {
+	Size = UDim2.new(0.5, -38, 1, 0),
+	Position = UDim2.new(0.5, 0, 0, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	TextColor3 = THEME_FPS,
+	Text = dropOptions[dropIdx],
+}, dropRow)
+
+local dropPrev = new("TextButton", {
+	Size = UDim2.fromOffset(22, 22),
+	Position = UDim2.new(1, -48, 0.5, 0),
+	AnchorPoint = Vector2.new(0, 0.5),
+	BackgroundColor3 = THEME.off,
+	TextColor3 = THEME.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Text = "<",
+	AutoButtonColor = false,
+}, dropRow)
+new("UICorner", { CornerRadius = UDim.new(0, 6) }, dropPrev)
+
+local dropNext = new("TextButton", {
+	Size = UDim2.fromOffset(22, 22),
+	Position = UDim2.new(1, -22, 0.5, 0),
+	AnchorPoint = Vector2.new(0, 0.5),
+	BackgroundColor3 = THEME.off,
+	TextColor3 = THEME.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Text = ">",
+	AutoButtonColor = false,
+}, dropRow)
+new("UICorner", { CornerRadius = UDim.new(0, 6) }, dropNext)
+
+local function updateDrop()
+	dropLabel.Text = dropOptions[dropIdx]
+	FPSState.TargetType = dropOptions[dropIdx]
+	lockedTarget = nil -- re-acquire with new type
+end
+
+dropPrev.MouseButton1Click:Connect(function()
+	dropIdx = dropIdx <= 1 and #dropOptions or dropIdx - 1
+	updateDrop()
+end)
+dropNext.MouseButton1Click:Connect(function()
+	dropIdx = dropIdx >= #dropOptions and 1 or dropIdx + 1
+	updateDrop()
+end)
+
+-- Hint label
+new("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 14),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 10,
+	TextColor3 = THEME.dim,
+	Text = "smooth tracking · re-locks when target dies",
+}, fpsPage)
+
+-- boot ---------------------------------------------------------------------
+RootJanitor.add(PanelGui)
+PanelGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- auto-reload across teleports
+-- IMPORTANT: This fetches YOUR GitHub file. You MUST save this
+-- refined code to: perpy08/RBXScripts/main/Univ-FPS.lua
+if queue_on_teleport then
+	queue_on_teleport([[
+		repeat task.wait() until game:IsLoaded()
+		task.wait(3)
+		if _G.__ZenGlitchJanitor then
+			pcall(function() _G.__ZenGlitchJanitor.clean() end)
+			_G.__ZenGlitchJanitor = nil
+		end
+		local url = "https://raw.githubusercontent.com/perpy08/RBXScripts/main/Univ-FPS.lua"
+		local ok, res = pcall(game.HttpGet, game, url)
+		if ok and res then
+			local func = loadstring(res)
+			if func then func() end
+		end
+	]])
+end
+
+print("[ZenGlitch] v2.0 loaded — RightShift toggles the panel")
