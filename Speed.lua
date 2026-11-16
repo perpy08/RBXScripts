@@ -763,169 +763,243 @@ addToggle("glitch trail",
 	function() return State.GlitchActive end,
 	function(v) State.GlitchActive = v end)
 
--- ── RACE SPEED (stacks on top of in-game speed × multiplier) ──────────
+-- ── RACE SPEED ──────────────────────────────────────────────────────────
 addSectionLabel("race speed")
 
--- BOOST PEDAL (hold-to-accelerate, coasts down on release) ------------
-local BOOST_RAMP_UP   = 6.0   -- pedal units gained per second while held
-local BOOST_RAMP_DOWN = 4.0   -- units lost per second after release
-
-local Boost = { holding = false, value = 0 }
-
-local pedal = new("Frame", {
-	Size = UDim2.new(1, 0, 0, 142),
-	BackgroundColor3 = THEME.panel,
-	BorderSizePixel = 0,
+-- Race Toggle toggle row (binds boost to Shift when on)
+local rtRow = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 34),
+	BackgroundColor3 = THEME.panel, BorderSizePixel = 0,
 }, content)
-new("UICorner", { CornerRadius = UDim.new(0, 8) }, pedal)
-
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, rtRow)
 new("TextLabel", {
-	Size = UDim2.new(1, -110, 0, 16),
-	Position = UDim2.fromOffset(11, 8),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamBold,
-	TextSize = 10,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextColor3 = THEME.dim,
-	Text = "RACE BOOST · HOLD",
-}, pedal)
+	Size = UDim2.new(1, -58, 1, 0), Position = UDim2.fromOffset(11, 0),
+	BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = THEME.text,
+	Text = "race toggle (Shift = boost)",
+}, rtRow)
+local rtSwitch = new("TextButton", {
+	Size = UDim2.fromOffset(38, 20), Position = UDim2.new(1, -48, 0.5, 0),
+	AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = THEME.off,
+	Text = "", AutoButtonColor = false,
+}, rtRow)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, rtSwitch)
+local rtKnob = new("Frame", {
+	Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 3, 0.5, 0),
+	AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+}, rtSwitch)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, rtKnob)
 
-local pedalValue = new("TextLabel", {
-	Size = UDim2.new(0, 100, 0, 16),
-	Position = UDim2.new(1, -111, 0, 8),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamBold,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Right,
-	TextColor3 = THEME.dim,
-	Text = "x1.00",
-}, pedal)
+local function paintRaceToggle()
+	local on = Boost.raceToggle
+	rtSwitch.BackgroundColor3 = on and THEME.accent or THEME.off
+	TweenService:Create(rtKnob, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {
+		Position = on and UDim2.new(1, -17, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)
+	}):Play()
+end
+rtSwitch.MouseButton1Click:Connect(function()
+	Boost.raceToggle = not Boost.raceToggle
+	paintRaceToggle()
+end)
+paintRaceToggle()
 
--- meter
-local track = new("Frame", {
-	Size = UDim2.new(1, -28, 0, 16),
-	Position = UDim2.new(0, 14, 0, 30),
-	BackgroundColor3 = Color3.fromRGB(24, 32, 27),
-	BorderSizePixel = 0,
-}, pedal)
-new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-new("UIStroke", { Color = THEME.accent, Transparency = 0.65, Thickness = 1 }, track)
+-- Pop-out button
+local popBtn = new("TextButton", {
+	Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = THEME.off,
+	TextColor3 = THEME.text, Font = Enum.Font.GothamBold, TextSize = 11,
+	Text = "POP OUT BOOST METER", AutoButtonColor = false,
+}, content)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, popBtn)
+new("UIStroke", { Color = THEME.stroke, Thickness = 1 }, popBtn)
 
-local fill = new("Frame", {
-	Size = UDim2.new(0, 0, 1, 0),
-	BackgroundColor3 = THEME.accent,
-	BorderSizePixel = 0,
-}, track)
-new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+-- Floating Boost HUD (separate ScreenGui — survives Alt/RightShift hide) --
+local boostHudGui = Instance.new("ScreenGui")
+boostHudGui.Name = "ZenBoostHUD"
+boostHudGui.ResetOnSpawn = false
+boostHudGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+boostHudGui.DisplayOrder = 1001
+boostHudGui.Enabled = false
 
--- tick scale 0x .. 10x
-local ticks = new("Frame", {
-	Size = UDim2.new(1, -28, 0, 30),
-	Position = UDim2.new(0, 14, 0, 52),
-	BackgroundTransparency = 1,
-}, pedal)
-for i = 0, Config.MaxRaceSpeed do
-	local alpha = i / Config.MaxRaceSpeed
-	local anchor = 0.5
-	if i == 0 then anchor = 0 elseif i == Config.MaxRaceSpeed then anchor = 1 end
-	new("Frame", {
-		Size = UDim2.fromOffset(2, 6),
-		Position = UDim2.new(alpha, 0, 0, 0),
-		AnchorPoint = Vector2.new(anchor, 0),
-		BackgroundColor3 = THEME.off,
-		BorderSizePixel = 0,
-	}, ticks)
+local hudFrame = new("Frame", {
+	Size = UDim2.fromOffset(290, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	Position = UDim2.new(0.5, -145, 0, 20),
+	BackgroundColor3 = THEME.bg,
+	BorderSizePixel = 0, Active = true,
+}, boostHudGui)
+new("UICorner", { CornerRadius = UDim.new(0, 10) }, hudFrame)
+new("UIStroke", { Color = THEME.accent, Transparency = 0.55, Thickness = 1 }, hudFrame)
+new("UIPadding", {
+	PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 10),
+	PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+}, hudFrame)
+new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, hudFrame)
+
+-- Drag handle on HUD header
+local hudHeader = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Active = true,
+}, hudFrame)
+new("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold, TextSize = 9,
+	TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = THEME.dim,
+	Text = "RACE BOOST · DRAG TO MOVE",
+}, hudHeader)
+
+local hudDrag, hudDragStart, hudStartPos = false, nil, nil
+hudHeader.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		hudDrag = true; hudDragStart = input.Position; hudStartPos = hudFrame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then hudDrag = false end
+		end)
+	end
+end)
+RootJanitor.connect(UserInputService.InputChanged, function(input)
+	if not hudDrag then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement
+		and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	local d = input.Position - hudDragStart
+	hudFrame.Position = UDim2.new(hudStartPos.X.Scale, hudStartPos.X.Offset + d.X,
+		hudStartPos.Y.Scale, hudStartPos.Y.Offset + d.Y)
+end)
+
+RootJanitor.add(boostHudGui)
+boostHudGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Shared meter widget factory ------------------------------------------
+local ALL_FILLS  = {}
+local ALL_VALLBL = {}
+local ALL_BTNS   = {}
+
+local function buildMeterWidget(parent)
+	-- value label
+	local vRow = new("Frame", { Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1 }, parent)
 	new("TextLabel", {
-		Size = UDim2.fromOffset(26, 12),
-		Position = UDim2.new(alpha, 0, 0, 9),
-		AnchorPoint = Vector2.new(anchor, 0),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.Gotham,
-		TextSize = 9,
-		TextColor3 = THEME.dim,
-		Text = tostring(i) .. "x",
-	}, ticks)
+		Size = UDim2.new(0.5, 0, 1, 0), BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = THEME.dim, Text = "RACE BOOST · HOLD",
+	}, vRow)
+	local vLbl = new("TextLabel", {
+		Size = UDim2.new(0.5, 0, 1, 0), Position = UDim2.new(0.5, 0, 0, 0),
+		BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = THEME.dim, Text = "off",
+	}, vRow)
+	table.insert(ALL_VALLBL, vLbl)
+
+	-- bar
+	local bg = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 16), BackgroundColor3 = Color3.fromRGB(24, 32, 27), BorderSizePixel = 0,
+	}, parent)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, bg)
+	new("UIStroke", { Color = THEME.accent, Transparency = 0.65, Thickness = 1 }, bg)
+	local fl = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = THEME.accent, BorderSizePixel = 0 }, bg)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, fl)
+	table.insert(ALL_FILLS, fl)
+
+	-- tick scale
+	local tRow = new("Frame", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1 }, parent)
+	for i = 0, Config.MaxRaceSpeed do
+		local alpha = i / Config.MaxRaceSpeed
+		local anc = (i == 0) and 0 or (i == Config.MaxRaceSpeed) and 1 or 0.5
+		new("Frame", { Size = UDim2.fromOffset(2, 5), Position = UDim2.new(alpha, 0, 0, 0),
+			AnchorPoint = Vector2.new(anc, 0), BackgroundColor3 = THEME.off, BorderSizePixel = 0 }, tRow)
+		new("TextLabel", { Size = UDim2.fromOffset(24, 12), Position = UDim2.new(alpha, 0, 0, 7),
+			AnchorPoint = Vector2.new(anc, 0), BackgroundTransparency = 1,
+			Font = Enum.Font.Gotham, TextSize = 9, TextColor3 = THEME.dim, Text = i .. "x" }, tRow)
+	end
+
+	-- button
+	local btn = new("TextButton", {
+		Size = UDim2.fromOffset(176, 42), Position = UDim2.new(0.5, 0, 0, 0),
+		AnchorPoint = Vector2.new(0.5, 0), BackgroundColor3 = Color3.fromRGB(52, 120, 80),
+		Text = "", AutoButtonColor = false,
+	}, parent)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, btn)
+	local icoF = new("Frame", { Size = UDim2.fromOffset(28, 18),
+		Position = UDim2.new(0.5, -52, 0.5, 0), AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundTransparency = 1 }, btn)
+	for i = 1, 3 do
+		new("Frame", { Size = UDim2.fromOffset(12 + i * 4, 3),
+			Position = UDim2.new(0.5, 0, 0.5, (i - 2) * 6), AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = THEME.bg, BorderSizePixel = 0, Rotation = -18 }, icoF)
+	end
+	new("TextLabel", { Size = UDim2.new(1, -68, 1, 0), Position = UDim2.fromOffset(58, 0),
+		BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = THEME.bg, Text = "BOOST" }, btn)
+	table.insert(ALL_BTNS, btn)
+	return btn
 end
 
--- pedal button
-local boostBtn = new("TextButton", {
-	Size = UDim2.fromOffset(176, 42),
-	Position = UDim2.new(0.5, 0, 0, 92),
-	AnchorPoint = Vector2.new(0.5, 0),
-	BackgroundColor3 = THEME.accent,
-	Text = "",
-	AutoButtonColor = false,
-}, pedal)
-new("UICorner", { CornerRadius = UDim.new(1, 0) }, boostBtn)
+-- Panel card
+local pedalCard = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundColor3 = THEME.panel, BorderSizePixel = 0,
+}, content)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, pedalCard)
+new("UIPadding", {
+	PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 12),
+	PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+}, pedalCard)
+new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, pedalCard)
+local panelBtn = buildMeterWidget(pedalCard)
 
-local icon = new("Frame", {
-	Size = UDim2.fromOffset(30, 20),
-	Position = UDim2.new(0.5, -54, 0.5, 0),
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	BackgroundTransparency = 1,
-}, boostBtn)
-for i = 1, 3 do
-	new("Frame", {
-		Size = UDim2.fromOffset(14 + i * 4, 3),
-		Position = UDim2.new(0.5, 0, 0.5, (i - 2) * 6),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundColor3 = THEME.bg,
-		BorderSizePixel = 0,
-		Rotation = -18,
-	}, icon)
-end
+-- HUD card (inside the floating window)
+local hudBtn = buildMeterWidget(hudFrame)
 
-new("TextLabel", {
-	Size = UDim2.new(1, -76, 1, 0),
-	Position = UDim2.fromOffset(62, 0),
-	BackgroundTransparency = 1,
-	Font = Enum.Font.GothamBold,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextColor3 = THEME.bg,
-	Text = "BOOST",
-}, boostBtn)
+-- Pop-out toggle logic
+local meterPopped = false
+popBtn.MouseButton1Click:Connect(function()
+	meterPopped = not meterPopped
+	boostHudGui.Enabled = meterPopped
+	pedalCard.Visible = not meterPopped
+	popBtn.Text = meterPopped and "COLLAPSE BOOST METER" or "POP OUT BOOST METER"
+	popBtn.BackgroundColor3 = meterPopped and THEME.accent or THEME.off
+	popBtn.TextColor3 = meterPopped and THEME.bg or THEME.text
+end)
 
+-- ── Paint all meter instances ─────────────────────────────────────────
 local function paintPedal()
 	local alpha = math.clamp(Boost.value / Config.MaxRaceSpeed, 0, 1)
-	fill.Size = UDim2.fromScale(alpha, 1)
+	local on    = Boost.value > 0.01
+	local multStr = on and string.format("x%.2f", raceMultiplier()) or "off"
+	local btnClr = Boost.holding and Color3.fromRGB(166, 255, 196)
+		or (on and THEME.accent or Color3.fromRGB(52, 120, 80))
 
-	local on = Boost.value > 0.01
-	pedalValue.Text = string.format("x%.2f", raceMultiplier())
-	pedalValue.TextColor3 = on and THEME.accent or THEME.dim
-
-	if Boost.holding then
-		boostBtn.BackgroundColor3 = Color3.fromRGB(166, 255, 196)
-	elseif on then
-		boostBtn.BackgroundColor3 = THEME.accent
-	else
-		boostBtn.BackgroundColor3 = Color3.fromRGB(52, 120, 80)
-	end
+	for _, fl in ipairs(ALL_FILLS)  do fl.Size = UDim2.fromScale(alpha, 1) end
+	for _, lb in ipairs(ALL_VALLBL) do lb.Text = multStr; lb.TextColor3 = on and THEME.accent or THEME.dim end
+	for _, bt in ipairs(ALL_BTNS)   do bt.BackgroundColor3 = btnClr end
 end
 
+-- ── setPedalHeld + button events ─────────────────────────────────────
 local function setPedalHeld(held)
 	if Boost.holding == held then return end
 	Boost.holding = held
-	TweenService:Create(boostBtn, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
-		Size = held and UDim2.fromOffset(182, 45) or UDim2.fromOffset(176, 42),
-	}):Play()
+	for _, bt in ipairs(ALL_BTNS) do
+		TweenService:Create(bt, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+			Size = held and UDim2.fromOffset(182, 45) or UDim2.fromOffset(176, 42),
+		}):Play()
+	end
 	paintPedal()
 end
 
-boostBtn.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch then
-		setPedalHeld(true)
-	end
-end)
-boostBtn.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch then
-		setPedalHeld(false)
-	end
-end)
+for _, bt in ipairs(ALL_BTNS) do
+	bt.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			setPedalHeld(true)
+		end
+	end)
+	bt.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			setPedalHeld(false)
+		end
+	end)
+end
 
--- Releasing outside the button still lifts the pedal
+-- Global release (cursor leaves button while held)
 RootJanitor.connect(UserInputService.InputEnded, function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1
 		or input.UserInputType == Enum.UserInputType.Touch then
@@ -933,7 +1007,30 @@ RootJanitor.connect(UserInputService.InputEnded, function(input)
 	end
 end)
 
--- Throttle: ramp while held, coast down when released
+-- ── Shift binding for Race Toggle ─────────────────────────────────────
+RootJanitor.connect(UserInputService.InputBegan, function(input, gp)
+	if gp then return end
+	if (input.KeyCode == Enum.KeyCode.LeftShift
+		or input.KeyCode == Enum.KeyCode.RightShift)
+		and Boost.raceToggle then
+		setPedalHeld(true)
+	end
+end)
+RootJanitor.connect(UserInputService.InputEnded, function(input)
+	if (input.KeyCode == Enum.KeyCode.LeftShift
+		or input.KeyCode == Enum.KeyCode.RightShift)
+		and Boost.raceToggle then
+		setPedalHeld(false)
+	end
+end)
+
+-- ── BOOST PEDAL (hold-to-accelerate, coasts down on release) ----------
+local BOOST_RAMP_UP   = 6.0
+local BOOST_RAMP_DOWN = 4.0
+
+-- (pedal card built via buildMeterWidget into pedalCard above)
+
+-- Throttle loop
 local lastPedalTick = os.clock()
 RootJanitor.connect(RunService.RenderStepped, function()
 	local now = os.clock()
@@ -964,7 +1061,7 @@ new("TextLabel", {
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextYAlignment = Enum.TextYAlignment.Top,
 	TextColor3 = THEME.dim,
-	Text = "hold BOOST to accelerate to x10 · release to coast back to off\nfinal = game speed x walk multiplier x race",
+	Text = "hold BOOST · release to coast off · Shift binds when race toggle on",
 }, content)
 
 new("TextLabel", {
