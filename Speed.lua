@@ -10,7 +10,7 @@
     · Glitch trail- stripped ghost clones, one shared Heartbeat
     · Persistence - ZenGlitch_Speed.json, restored on load
     · Auto-reload - Speed.lua on teleport
-    · Race Speed  - draggable 0..x10 slider with RESET, 0 = inactive
+    · Race Speed  - hold-to-boost gas pedal, x1 .. x10, coasts back down
                     final = game speed x walk multiplier x race
 =====================================================================
 ]]
@@ -33,8 +33,7 @@ local Config = {
 	MinSpeedMultiplier = 0.1,
 	SprintFactor       = 1.6,     -- used only when the game never raises WalkSpeed
 	MaxRawFactor       = 6,       -- ignore absurd raw values to avoid feedback loops
-	MaxRaceSpeed       = 10,      -- race slider ceiling
-	RaceStep           = 0.5,     -- slider snap
+	MaxRaceSpeed       = 10,      -- pedal ceiling (x1 .. x10)
 	MaxAbsoluteSpeed   = 250000,  -- hard ceiling we will ever write
 	GhostFrameTime     = 0.33,
 	GhostLifetime      = 0.35,
@@ -68,6 +67,9 @@ if _saved then
 		if State[k] ~= nil then State[k] = v end
 	end
 end
+
+-- The pedal is a live input: never restore it pre-boosted
+State.RaceSpeed = 0
 
 local Runtime = { alive = true }
 
@@ -156,10 +158,12 @@ end
 -- Race Speed stacks ON TOP of the in-game speed:
 --   game's raw speed  x  walk/slow multiplier  x  race multiplier
 -- A race value of 0 means "inactive" (multiplier 1, not 0).
+-- Pedal position reads directly as the multiplier (3x on the meter = x3),
+-- with a floor of 1 so the low end is a true "off" instead of slowing you.
 local function raceMultiplier()
-	local r = State.RaceSpeed or 0
+	local r = math.clamp(State.RaceSpeed or 0, 0, Config.MaxRaceSpeed)
 	if r <= 0 then return 1 end
-	return math.clamp(r, 1, Config.MaxRaceSpeed)
+	return math.max(1, r)
 end
 
 local function desiredSpeed(humanoid)
@@ -679,177 +683,7 @@ local function updateStepperVisuals()
 	end
 end
 
--- Slider factory (draggable track + reset button) ----------------------
-local function addSlider(label, get, set, minV, maxV, step, format, accentOverride)
-	local ac = accentOverride or THEME.accent
-
-	local row = new("Frame", {
-		Size = UDim2.new(1, 0, 0, 56),
-		BackgroundColor3 = THEME.panel,
-		BorderSizePixel = 0,
-	}, content)
-	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
-
-	new("TextLabel", {
-		Size = UDim2.new(1, -166, 0, 18),
-		Position = UDim2.fromOffset(11, 8),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamMedium,
-		TextSize = 12,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextColor3 = THEME.text,
-		Text = label,
-	}, row)
-
-	local valueLabel = new("TextLabel", {
-		Size = UDim2.new(0, 56, 0, 18),
-		Position = UDim2.new(1, -108, 0, 8),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		TextSize = 11,
-		TextXAlignment = Enum.TextXAlignment.Right,
-		TextColor3 = ac,
-		Text = format(get()),
-		Active = true,
-		ZIndex = 4,
-	}, row)
-
-	-- Real text label: the old "↺" glyph is missing from Gotham and rendered blank
-	local resetBtn = new("TextButton", {
-		Size = UDim2.fromOffset(42, 18),
-		Position = UDim2.new(1, -46, 0, 8),
-		BackgroundColor3 = THEME.off,
-		TextColor3 = THEME.text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 9,
-		Text = "RESET",
-		AutoButtonColor = false,
-		ZIndex = 6,
-	}, row)
-	new("UICorner", { CornerRadius = UDim.new(0, 5) }, resetBtn)
-	new("UIStroke", { Color = THEME.stroke, Thickness = 1 }, resetBtn)
-
-	local track = new("Frame", {
-		Size = UDim2.new(1, -28, 0, 8),
-		Position = UDim2.new(0, 14, 1, -16),
-		BackgroundColor3 = THEME.off,
-		BorderSizePixel = 0,
-		Active = true,
-		ClipsDescendants = false,
-	}, row)
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
-
-	local fill = new("Frame", {
-		Size = UDim2.new(0, 0, 1, 0),
-		BackgroundColor3 = ac,
-		BorderSizePixel = 0,
-	}, track)
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
-
-	local knob = new("Frame", {
-		Size = UDim2.fromOffset(16, 16),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0, 0, 0.5, 0),
-		BackgroundColor3 = Color3.new(1, 1, 1),
-		BorderSizePixel = 0,
-		Active = true,
-	}, track)
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
-
-	local function clampValue(v)
-		return math.clamp(math.floor(v / step + 0.5) * step, minV, maxV)
-	end
-
-	local function paint()
-		local v = get()
-		local alpha = (maxV > minV) and math.clamp((v - minV) / (maxV - minV), 0, 1) or 0
-		fill.Size = UDim2.fromScale(alpha, 1)
-		knob.Position = UDim2.fromScale(alpha, 0.5)
-		valueLabel.Text = format(v)
-		local active = v > 0
-		valueLabel.TextColor3 = active and ac or THEME.dim
-		fill.BackgroundColor3 = active and ac or THEME.off
-		knob.BackgroundColor3 = active and Color3.new(1, 1, 1) or THEME.dim
-	end
-
-	local dragging = false
-
-	local function setFromX(x)
-		local absX = track.AbsolutePosition.X
-		local width = math.max(track.AbsoluteSize.X, 1)
-		local alpha = math.clamp((x - absX) / width, 0, 1)
-		set(clampValue(minV + alpha * (maxV - minV)))
-		paint()
-		if Speed.humanoid then writeSpeed(Speed.humanoid) end
-	end
-
-	local function beginDrag(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			setFromX(input.Position.X)
-		end
-	end
-
-	track.InputBegan:Connect(beginDrag)
-	knob.InputBegan:Connect(beginDrag)
-
-	RootJanitor.connect(UserInputService.InputChanged, function(input)
-		if not dragging then return end
-		if input.UserInputType == Enum.UserInputType.MouseMovement
-			or input.UserInputType == Enum.UserInputType.Touch then
-			setFromX(input.Position.X)
-		end
-	end)
-
-	RootJanitor.connect(UserInputService.InputEnded, function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
-		end
-	end)
-
-	local function resetToDefault()
-		dragging = false
-		set(minV) -- 0 = inactive
-		paint()
-		if Speed.humanoid then writeSpeed(Speed.humanoid) end
-	end
-
-	resetBtn.MouseButton1Click:Connect(function()
-		resetToDefault()
-		-- visible confirmation that the reset registered
-		resetBtn.Text = "OFF"
-		resetBtn.BackgroundColor3 = ac
-		resetBtn.TextColor3 = THEME.bg
-		task.delay(0.55, function()
-			if resetBtn.Parent then
-				resetBtn.Text = "RESET"
-				resetBtn.BackgroundColor3 = THEME.off
-				resetBtn.TextColor3 = THEME.text
-			end
-		end)
-	end)
-
-	resetBtn.MouseEnter:Connect(function()
-		resetBtn.BackgroundColor3 = THEME.stroke
-	end)
-	resetBtn.MouseLeave:Connect(function()
-		if resetBtn.Text == "RESET" then
-			resetBtn.BackgroundColor3 = THEME.off
-		end
-	end)
-
-	-- Double-clicking the value label also resets
-	valueLabel.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			resetToDefault()
-		end
-	end)
-
-	paint()
-	return row, paint
-end
+-- (The draggable slider was retired in favour of the BOOST pedal below.)
 
 -- Wiring --------------------------------------------------------------
 addSectionLabel("walk speed")
@@ -932,19 +766,194 @@ addToggle("glitch trail",
 -- ── RACE SPEED (stacks on top of in-game speed × multiplier) ──────────
 addSectionLabel("race speed")
 
-addSlider(
-	"race boost",
-	function() return State.RaceSpeed or 0 end,
-	function(v) State.RaceSpeed = v end,
-	0, Config.MaxRaceSpeed, Config.RaceStep,
-	function(v)
-		if v <= 0 then return "off" end
-		if math.abs(v - math.floor(v + 0.5)) < 0.01 then
-			return string.format("x%d", math.floor(v + 0.5))
-		end
-		return string.format("x%.1f", v)
+-- BOOST PEDAL (hold-to-accelerate, coasts down on release) ------------
+local BOOST_RAMP_UP   = 6.0   -- pedal units gained per second while held
+local BOOST_RAMP_DOWN = 4.0   -- units lost per second after release
+
+local Boost = { holding = false, value = 0 }
+
+local pedal = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 142),
+	BackgroundColor3 = THEME.panel,
+	BorderSizePixel = 0,
+}, content)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, pedal)
+
+new("TextLabel", {
+	Size = UDim2.new(1, -110, 0, 16),
+	Position = UDim2.fromOffset(11, 8),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = THEME.dim,
+	Text = "RACE BOOST · HOLD",
+}, pedal)
+
+local pedalValue = new("TextLabel", {
+	Size = UDim2.new(0, 100, 0, 16),
+	Position = UDim2.new(1, -111, 0, 8),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	TextColor3 = THEME.dim,
+	Text = "x1.00",
+}, pedal)
+
+-- meter
+local track = new("Frame", {
+	Size = UDim2.new(1, -28, 0, 16),
+	Position = UDim2.new(0, 14, 0, 30),
+	BackgroundColor3 = Color3.fromRGB(24, 32, 27),
+	BorderSizePixel = 0,
+}, pedal)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+new("UIStroke", { Color = THEME.accent, Transparency = 0.65, Thickness = 1 }, track)
+
+local fill = new("Frame", {
+	Size = UDim2.new(0, 0, 1, 0),
+	BackgroundColor3 = THEME.accent,
+	BorderSizePixel = 0,
+}, track)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+
+-- tick scale 0x .. 10x
+local ticks = new("Frame", {
+	Size = UDim2.new(1, -28, 0, 30),
+	Position = UDim2.new(0, 14, 0, 52),
+	BackgroundTransparency = 1,
+}, pedal)
+for i = 0, Config.MaxRaceSpeed do
+	local alpha = i / Config.MaxRaceSpeed
+	local anchor = 0.5
+	if i == 0 then anchor = 0 elseif i == Config.MaxRaceSpeed then anchor = 1 end
+	new("Frame", {
+		Size = UDim2.fromOffset(2, 6),
+		Position = UDim2.new(alpha, 0, 0, 0),
+		AnchorPoint = Vector2.new(anchor, 0),
+		BackgroundColor3 = THEME.off,
+		BorderSizePixel = 0,
+	}, ticks)
+	new("TextLabel", {
+		Size = UDim2.fromOffset(26, 12),
+		Position = UDim2.new(alpha, 0, 0, 9),
+		AnchorPoint = Vector2.new(anchor, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 9,
+		TextColor3 = THEME.dim,
+		Text = tostring(i) .. "x",
+	}, ticks)
+end
+
+-- pedal button
+local boostBtn = new("TextButton", {
+	Size = UDim2.fromOffset(176, 42),
+	Position = UDim2.new(0.5, 0, 0, 92),
+	AnchorPoint = Vector2.new(0.5, 0),
+	BackgroundColor3 = THEME.accent,
+	Text = "",
+	AutoButtonColor = false,
+}, pedal)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, boostBtn)
+
+local icon = new("Frame", {
+	Size = UDim2.fromOffset(30, 20),
+	Position = UDim2.new(0.5, -54, 0.5, 0),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	BackgroundTransparency = 1,
+}, boostBtn)
+for i = 1, 3 do
+	new("Frame", {
+		Size = UDim2.fromOffset(14 + i * 4, 3),
+		Position = UDim2.new(0.5, 0, 0.5, (i - 2) * 6),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = THEME.bg,
+		BorderSizePixel = 0,
+		Rotation = -18,
+	}, icon)
+end
+
+new("TextLabel", {
+	Size = UDim2.new(1, -76, 1, 0),
+	Position = UDim2.fromOffset(62, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = THEME.bg,
+	Text = "BOOST",
+}, boostBtn)
+
+local function paintPedal()
+	local alpha = math.clamp(Boost.value / Config.MaxRaceSpeed, 0, 1)
+	fill.Size = UDim2.fromScale(alpha, 1)
+
+	local on = Boost.value > 0.01
+	pedalValue.Text = string.format("x%.2f", raceMultiplier())
+	pedalValue.TextColor3 = on and THEME.accent or THEME.dim
+
+	if Boost.holding then
+		boostBtn.BackgroundColor3 = Color3.fromRGB(166, 255, 196)
+	elseif on then
+		boostBtn.BackgroundColor3 = THEME.accent
+	else
+		boostBtn.BackgroundColor3 = Color3.fromRGB(52, 120, 80)
 	end
-)
+end
+
+local function setPedalHeld(held)
+	if Boost.holding == held then return end
+	Boost.holding = held
+	TweenService:Create(boostBtn, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+		Size = held and UDim2.fromOffset(182, 45) or UDim2.fromOffset(176, 42),
+	}):Play()
+	paintPedal()
+end
+
+boostBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		setPedalHeld(true)
+	end
+end)
+boostBtn.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		setPedalHeld(false)
+	end
+end)
+
+-- Releasing outside the button still lifts the pedal
+RootJanitor.connect(UserInputService.InputEnded, function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		setPedalHeld(false)
+	end
+end)
+
+-- Throttle: ramp while held, coast down when released
+local lastPedalTick = os.clock()
+RootJanitor.connect(RunService.RenderStepped, function()
+	local now = os.clock()
+	local dt = math.min(now - lastPedalTick, 0.1)
+	lastPedalTick = now
+
+	local before = Boost.value
+	if Boost.holding then
+		Boost.value = math.min(Config.MaxRaceSpeed, Boost.value + BOOST_RAMP_UP * dt)
+	else
+		Boost.value = math.max(0, Boost.value - BOOST_RAMP_DOWN * dt)
+	end
+	State.RaceSpeed = Boost.value
+
+	if math.abs(Boost.value - before) > 0.0005 then
+		paintPedal()
+	end
+end)
+
+paintPedal()
 
 new("TextLabel", {
 	Size = UDim2.new(1, -4, 0, 26),
@@ -955,7 +964,7 @@ new("TextLabel", {
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextYAlignment = Enum.TextYAlignment.Top,
 	TextColor3 = THEME.dim,
-	Text = "final = game speed x walk multiplier x race boost (0 - x10). 0 = inactive.",
+	Text = "hold BOOST to accelerate to x10 · release to coast back to off\nfinal = game speed x walk multiplier x race",
 }, content)
 
 new("TextLabel", {
