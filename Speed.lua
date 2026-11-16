@@ -794,10 +794,12 @@ addToggle("glitch trail",
 
 -- ── RACE SPEED ──────────────────────────────────────────────────────────
 local Boost = { holding = false, value = 0, raceToggle = false }
+local paintPedal
+local setPedalHeld
 
 addSectionLabel("race speed")
 
--- Race Toggle toggle row (binds boost to Shift when on)
+-- Race Toggle toggle row (locks Race Speed to x10 when on)
 local rtRow = new("Frame", {
 	Size = UDim2.new(1, 0, 0, 34),
 	BackgroundColor3 = THEME.panel, BorderSizePixel = 0,
@@ -807,7 +809,7 @@ new("TextLabel", {
 	Size = UDim2.new(1, -58, 1, 0), Position = UDim2.fromOffset(11, 0),
 	BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 12,
 	TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = THEME.text,
-	Text = "race toggle (Shift = boost)",
+	Text = "race toggle (auto x10)",
 }, rtRow)
 local rtSwitch = new("TextButton", {
 	Size = UDim2.fromOffset(38, 20), Position = UDim2.new(1, -48, 0.5, 0),
@@ -830,17 +832,22 @@ local function paintRaceToggle()
 end
 rtSwitch.MouseButton1Click:Connect(function()
 	Boost.raceToggle = not Boost.raceToggle
-	-- When toggling OFF: immediately release the pedal so boost doesn't
-	-- get stuck at max.  When toggling ON: only start boosting when the
-	-- user actually presses Shift *after* the toggle — don't inherit a
-	-- Shift that's already held down from sprinting.
-	if not Boost.raceToggle then
-		setPedalHeld(false)
-	else
-		-- Clear any lingering held state; the user must press Shift fresh.
+
+	if Boost.raceToggle then
+		-- True race mode: instantly lock to x10 the moment the toggle is on.
 		Boost.holding = false
+		Boost.value = Config.MaxRaceSpeed
+		State.RaceSpeed = Config.MaxRaceSpeed
+	else
+		-- Toggle off = release any held pedal state and drop race speed fully.
+		setPedalHeld(false)
+		Boost.value = 0
+		State.RaceSpeed = 0
 	end
+
 	paintRaceToggle()
+	paintPedal()
+	if Speed.humanoid then writeSpeed(Speed.humanoid) end
 end)
 paintRaceToggle()
 
@@ -1001,11 +1008,12 @@ popBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ── Paint all meter instances ─────────────────────────────────────────
-local function paintPedal()
+paintPedal = function()
 	local alpha = math.clamp(Boost.value / Config.MaxRaceSpeed, 0, 1)
 	local on    = Boost.value > 0.01
 	local multStr = on and string.format("x%.2f", raceMultiplier()) or "off"
-	local btnClr = Boost.holding and Color3.fromRGB(166, 255, 196)
+	local btnClr = Boost.raceToggle and Color3.fromRGB(166, 255, 196)
+		or Boost.holding and Color3.fromRGB(166, 255, 196)
 		or (on and THEME.accent or Color3.fromRGB(52, 120, 80))
 
 	for _, fl in ipairs(ALL_FILLS)  do fl.Size = UDim2.fromScale(alpha, 1) end
@@ -1014,7 +1022,7 @@ local function paintPedal()
 end
 
 -- ── setPedalHeld + button events ─────────────────────────────────────
-local function setPedalHeld(held)
+setPedalHeld = function(held)
 	if Boost.holding == held then return end
 	Boost.holding = held
 	for _, bt in ipairs(ALL_BTNS) do
@@ -1082,15 +1090,21 @@ RootJanitor.connect(RunService.RenderStepped, function()
 	lastPedalTick = now
 
 	local before = Boost.value
-	if Boost.holding then
-		Boost.value = math.min(Config.MaxRaceSpeed, Boost.value + BOOST_RAMP_UP * dt)
+	if Boost.raceToggle then
+		-- Race Toggle is now a hard lock: ON = x10 instantly and continuously.
+		Boost.value = Config.MaxRaceSpeed
 	else
-		Boost.value = math.max(0, Boost.value - BOOST_RAMP_DOWN * dt)
+		if Boost.holding then
+			Boost.value = math.min(Config.MaxRaceSpeed, Boost.value + BOOST_RAMP_UP * dt)
+		else
+			Boost.value = math.max(0, Boost.value - BOOST_RAMP_DOWN * dt)
+		end
 	end
 	State.RaceSpeed = Boost.value
 
 	if math.abs(Boost.value - before) > 0.0005 then
 		paintPedal()
+		if Speed.humanoid then writeSpeed(Speed.humanoid) end
 	end
 end)
 
@@ -1105,7 +1119,7 @@ new("TextLabel", {
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextYAlignment = Enum.TextYAlignment.Top,
 	TextColor3 = THEME.dim,
-	Text = "hold BOOST · release to coast off · Shift binds when race toggle on",
+	Text = "hold BOOST for manual ramp · race toggle locks x10 instantly",
 }, content)
 
 new("TextLabel", {
