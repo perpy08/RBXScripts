@@ -830,6 +830,16 @@ local function paintRaceToggle()
 end
 rtSwitch.MouseButton1Click:Connect(function()
 	Boost.raceToggle = not Boost.raceToggle
+	-- When toggling OFF: immediately release the pedal so boost doesn't
+	-- get stuck at max.  When toggling ON: only start boosting when the
+	-- user actually presses Shift *after* the toggle — don't inherit a
+	-- Shift that's already held down from sprinting.
+	if not Boost.raceToggle then
+		setPedalHeld(false)
+	else
+		-- Clear any lingering held state; the user must press Shift fresh.
+		Boost.holding = false
+	end
 	paintRaceToggle()
 end)
 paintRaceToggle()
@@ -1048,10 +1058,13 @@ RootJanitor.connect(UserInputService.InputBegan, function(input, gp)
 	end
 end)
 RootJanitor.connect(UserInputService.InputEnded, function(input)
-	if (input.KeyCode == Enum.KeyCode.LeftShift
-		or input.KeyCode == Enum.KeyCode.RightShift)
-		and Boost.raceToggle then
-		setPedalHeld(false)
+	if input.KeyCode == Enum.KeyCode.LeftShift
+		or input.KeyCode == Enum.KeyCode.RightShift then
+		-- Always release the pedal on Shift-up, even if raceToggle was
+		-- turned off mid-hold.  Prevents Boost.holding getting stuck true.
+		if Boost.holding then
+			setPedalHeld(false)
+		end
 	end
 end)
 
