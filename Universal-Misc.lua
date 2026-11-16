@@ -31,7 +31,7 @@ local LocalPlayer = Players.LocalPlayer
 local Config = {
 	BaseWalkSpeed      = 16,
 	MinSpeedMultiplier = 0.1,
-	MaxSpeedMultiplier = 5,
+	MaxSpeedMultiplier = 10, -- walk speed can boost up to x10
 	GhostFrameTime     = 0.33,
 	GhostLifetime      = 0.35,
 	AnimSkipBase       = 0.15,
@@ -188,22 +188,127 @@ RootJanitor.connect(Players.PlayerAdded, watchPlayer)
 -- =====================================================================
 local currentHumanoid = nil
 
-local CORE_ANIMS = { "walk", "run", "idle", "jump", "fall", "climb", "swim", "sit", "toolnone" }
+-- Locomotion animations we must never accelerate
+local CORE_ANIMS = {
+	"walk", "run", "idle", "jump", "fall", "climb", "swim", "sit",
+	"toolnone", "pose", "emote", "dance", "land", "straf",
+}
 
-local function applyAttackSpeed(track)
-	if State.AttackSpeedMultiplier == 1.0 then return end
-	local name = string.lower(track.Name)
+local function isCoreAnim(name)
+	name = string.lower(name or "")
 	for _, core in ipairs(CORE_ANIMS) do
-		if string.find(name, core) then return end
+		if string.find(name, core, 1, true) then return true end
 	end
-	task.spawn(function()
-		track:AdjustSpeed(State.AttackSpeedMultiplier)
-		task.wait()
-		if track.IsPlaying then
-			track:AdjustSpeed(State.AttackSpeedMultiplier)
+	return false
+end
+
+local attackBoostDirty = false
+
+-- Apply the multiplier to a single track (safe against dead tracks)
+local function tuneTrack(track)
+	if not track then return end
+	local ok, playing = pcall(function() return track.IsPlaying end)
+	if not ok or not playing then return end
+	if isCoreAnim(track.Name) then return end
+	local m = State.AttackSpeedMultiplier
+	if m == 1.0 then return end
+	local applied = pcall(function() track:AdjustSpeed(m) end)
+	if applied then attackBoostDirty = true end
+end
+
+-- Put anything we boosted back to normal speed
+local function restoreAttackSpeed()
+	local character = LocalPlayer.Character
+	if character then
+		for _, node in ipairs(character:GetDescendants()) do
+			if node:IsA("Animator") then
+				for _, track in ipairs(node:GetPlayingAnimationTracks()) do
+					if not isCoreAnim(track.Name) then
+						pcall(function() track:AdjustSpeed(1) end)
+					end
+				end
+			end
 		end
+	end
+	attackBoostDirty = false
+end
+
+-- Every Animator / character we've already hooked (weak keys => disposed ones drop)
+local watchedAnimators = setmetatable({}, { __mode = "k" })
+local hookedCharacters = setmetatable({}, { __mode = "k" })
+
+local function tuneAnimator(animator, janitor)
+	if not animator or not animator:IsA("Animator") then return end
+	if watchedAnimators[animator] then return end
+	watchedAnimators[animator] = true
+
+	-- New attacks: tune immediately, again next frame, and shortly after.
+	-- Games often call AdjustSpeed themselves right after Play, so we re-assert.
+	janitor.connect(animator.AnimationPlayed, function(track)
+		tuneTrack(track)
+		task.defer(function() tuneTrack(track) end)
+		task.delay(0.05, function() tuneTrack(track) end)
+	end)
+
+	for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+		tuneTrack(track)
+	end
+end
+
+local function tuneCharacter(character, janitor)
+	if not character then return end
+	janitor = janitor or RootJanitor
+
+	-- Always rescan: Animators can appear after the initial setup
+	for _, node in ipairs(character:GetDescendants()) do
+		if node:IsA("Animator") then tuneAnimator(node, janitor) end
+	end
+
+	-- But only wire the discovery listeners once per character
+	if hookedCharacters[character] then return end
+	hookedCharacters[character] = true
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		janitor.connect(humanoid.ChildAdded, function(child)
+			if child:IsA("Animator") then tuneAnimator(child, janitor) end
+		end)
+	end
+	-- Catches Animators created later by tool scripts / custom rigs
+	janitor.connect(character.DescendantAdded, function(child)
+		if child:IsA("Animator") then tuneAnimator(child, janitor) end
 	end)
 end
+
+-- Re-assert the multiplier for everything currently playing.
+-- Games frequently re-Play or reset speed mid-attack, which is why a
+-- one-shot AdjustSpeed on AnimationPlayed often appears to "do nothing".
+local function applyAttackSpeedNow()
+	if State.AttackSpeedMultiplier == 1.0 then return end
+	local character = LocalPlayer.Character
+	if not character then return end
+	for _, node in ipairs(character:GetDescendants()) do
+		if node:IsA("Animator") then
+			for _, track in ipairs(node:GetPlayingAnimationTracks()) do
+				tuneTrack(track)
+			end
+		end
+	end
+end
+
+-- Periodic enforcement (10 Hz, cheap) while a boost is active
+task.spawn(function()
+	while Runtime.alive do
+		if State.AttackSpeedMultiplier ~= 1.0 then
+			if not State.GlitchActive then
+				applyAttackSpeedNow()
+			end
+		elseif attackBoostDirty then
+			restoreAttackSpeed()
+		end
+		task.wait(0.1)
+	end
+end)
 
 local function targetWalkSpeed(humanoid)
 	local base = humanoid:GetAttribute("ZenBaseSpeed") or Config.BaseWalkSpeed
@@ -234,10 +339,14 @@ local function setupCharacter(character)
 	janitor.connect(humanoid.Died, function() janitor.clean() end)
 	janitor.connect(character.Destroying, function() janitor.clean() end)
 
-	local animator = humanoid:FindFirstChildOfClass("Animator")
-	if animator then
-		janitor.connect(animator.AnimationPlayed, applyAttackSpeed)
-	end
+	-- Attack speed: hook every Animator in the rig (including late ones)
+	tuneCharacter(character, janitor)
+	task.delay(0.5, function()
+		if character.Parent then
+			tuneCharacter(character, janitor)
+			applyAttackSpeedNow()
+		end
+	end)
 
 	local applying = false
 	janitor.connect(humanoid:GetPropertyChangedSignal("WalkSpeed"), function()
@@ -344,6 +453,7 @@ local function createGhostClone(character)
 end
 
 local function watchAnimations(animator, janitor)
+	if not animator then return end
 	local function attach(track)
 		jitteredTracks[track] = { lastSkip = 0 }
 	end
@@ -683,8 +793,10 @@ local function addStepper(label, id, get, set, minV, maxV, step)
 		local v = math.clamp(math.floor((get() + dir * step) * 100 + 0.5) / 100, minV, maxV)
 		set(v)
 		value.Text = string.format("%.2fx", v)
-		if (id == "fast" or id == "slow") and currentHumanoid then
-			refreshSpeed(currentHumanoid)
+		if id == "fast" or id == "slow" then
+			if currentHumanoid then refreshSpeed(currentHumanoid) end
+		elseif id == "atk" then
+			applyAttackSpeedNow()
 		end
 	end
 
@@ -755,11 +867,11 @@ safeLandRow = addToggle("↳ safe landing",
 addStepper("fast speed", "fast",
 	function() return State.CurrentSpeedMultiplier end,
 	function(v) State.CurrentSpeedMultiplier = v end,
-	1.0, 5, 0.25)
+	1.0, 10, 0.25)
 addStepper("slow speed", "slow",
 	function() return State.SlowSpeedMultiplier end,
 	function(v) State.SlowSpeedMultiplier = v end,
-	1.0, 5, 0.25)
+	1.0, 10, 0.25)
 
 local modeBtn = new("TextButton", {
 	Size = UDim2.new(1, 0, 0, 30),
@@ -783,7 +895,7 @@ addSectionLabel("combat")
 addStepper("attack speed", "atk",
 	function() return State.AttackSpeedMultiplier end,
 	function(v) State.AttackSpeedMultiplier = v end,
-	0.25, 5, 0.25)
+	0.25, 10, 0.25)
 
 addSectionLabel("visuals")
 addToggle("player esp",
