@@ -10,6 +10,8 @@
     · Glitch trail- stripped ghost clones, one shared Heartbeat
     · Persistence - ZenGlitch_Speed.json, restored on load
     · Auto-reload - Speed.lua on teleport
+    · Race Speed  - draggable 0..1000 slider, 0 = inactive
+                    final = game speed x walk multiplier x race
 =====================================================================
 ]]
 
@@ -26,11 +28,14 @@ local LocalPlayer = Players.LocalPlayer
 
 -- Config --------------------------------------------------------------
 local Config = {
-	BaseWalkSpeed      = 16,   -- fallback only; the real base is read from the Humanoid
-	MaxSpeedMultiplier = 10,   -- walk / sprint ceiling
+	BaseWalkSpeed      = 16,      -- fallback only; the real base is read from the Humanoid
+	MaxSpeedMultiplier = 10,      -- walk / sprint ceiling
 	MinSpeedMultiplier = 0.1,
-	SprintFactor       = 1.6,  -- used only when the game never raises WalkSpeed
-	MaxRawFactor       = 6,    -- ignore absurd raw values to avoid feedback loops
+	SprintFactor       = 1.6,     -- used only when the game never raises WalkSpeed
+	MaxRawFactor       = 6,       -- ignore absurd raw values to avoid feedback loops
+	MaxRaceSpeed       = 1000,    -- race slider ceiling
+	RaceStep           = 25,      -- slider snap
+	MaxAbsoluteSpeed   = 250000,  -- hard ceiling we will ever write
 	GhostFrameTime     = 0.33,
 	GhostLifetime      = 0.35,
 	AnimSkipBase       = 0.15,
@@ -53,6 +58,7 @@ local State = {
 	CurrentSpeedMultiplier = 1.0,
 	SlowSpeedMultiplier    = 1.0,
 	SpeedMode              = "Fast", -- "Fast" | "Slow"
+	RaceSpeed              = 0,      -- 0 = race boost inactive, else 1..1000
 	KillGlowActive         = false,
 	GlitchActive           = false,
 }
@@ -147,6 +153,15 @@ local function clampRaw(humanoid, raw)
 end
 
 -- The single source of truth for what WalkSpeed should be right now.
+-- Race Speed stacks ON TOP of the in-game speed:
+--   game's raw speed  x  walk/slow multiplier  x  race multiplier
+-- A race value of 0 means "inactive" (multiplier 1, not 0).
+local function raceMultiplier()
+	local r = State.RaceSpeed or 0
+	if r <= 0 then return 1 end
+	return math.clamp(r, 1, Config.MaxRaceSpeed)
+end
+
 local function desiredSpeed(humanoid)
 	local mult   = activeMultiplier()
 	local base   = baseRaw(humanoid)
@@ -160,7 +175,7 @@ local function desiredSpeed(humanoid)
 	end
 
 	raw = clampRaw(humanoid, raw)
-	return math.clamp(raw * mult, 0, 2000)
+	return math.clamp(raw * mult * raceMultiplier(), 0, Config.MaxAbsoluteSpeed)
 end
 
 local function writeSpeed(humanoid)
@@ -171,7 +186,8 @@ local function writeSpeed(humanoid)
 
 	-- Idle state: hand control back to the game so we never fight
 	-- a game's own speed system when no boost is requested.
-	if mult == 1 and not sprinting and not Speed.hadBoost then return end
+	local raceOn = (State.RaceSpeed or 0) > 0
+	if mult == 1 and not sprinting and not raceOn and not Speed.hadBoost then return end
 
 	local target = desiredSpeed(humanoid)
 	local rawBase = Speed.walkRaw or baseRaw(humanoid)
@@ -228,6 +244,13 @@ local function setupSpeed(character)
 		local v = humanoid.WalkSpeed
 		if Speed.lastWritten and math.abs(v - Speed.lastWritten) < 0.05 then
 			return -- our own echo, ignore
+		end
+
+		-- With Race Speed active our writes are in the hundreds/thousands.
+		-- Never learn from those; just keep enforcing our target.
+		if (State.RaceSpeed or 0) > 0 then
+			writeSpeed(humanoid)
+			return
 		end
 
 		local base = baseRaw(humanoid)
@@ -656,6 +679,141 @@ local function updateStepperVisuals()
 	end
 end
 
+-- Slider factory (draggable track + reset button) ----------------------
+local function addSlider(label, get, set, minV, maxV, step, format, accentOverride)
+	local ac = accentOverride or THEME.accent
+
+	local row = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 56),
+		BackgroundColor3 = THEME.panel,
+		BorderSizePixel = 0,
+	}, content)
+	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
+
+	new("TextLabel", {
+		Size = UDim2.new(1, -132, 0, 18),
+		Position = UDim2.fromOffset(11, 8),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = THEME.text,
+		Text = label,
+	}, row)
+
+	local valueLabel = new("TextLabel", {
+		Size = UDim2.new(0, 74, 0, 18),
+		Position = UDim2.new(1, -104, 0, 8),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		TextColor3 = ac,
+		Text = format(get()),
+	}, row)
+
+	local resetBtn = new("TextButton", {
+		Size = UDim2.fromOffset(22, 18),
+		Position = UDim2.new(1, -24, 0, 8),
+		BackgroundColor3 = THEME.off,
+		TextColor3 = THEME.text,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		Text = "↺",
+		AutoButtonColor = false,
+	}, row)
+	new("UICorner", { CornerRadius = UDim.new(0, 5) }, resetBtn)
+
+	local track = new("Frame", {
+		Size = UDim2.new(1, -28, 0, 8),
+		Position = UDim2.new(0, 14, 1, -16),
+		BackgroundColor3 = THEME.off,
+		BorderSizePixel = 0,
+		Active = true,
+		ClipsDescendants = false,
+	}, row)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+
+	local fill = new("Frame", {
+		Size = UDim2.new(0, 0, 1, 0),
+		BackgroundColor3 = ac,
+		BorderSizePixel = 0,
+	}, track)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+
+	local knob = new("Frame", {
+		Size = UDim2.fromOffset(16, 16),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0, 0, 0.5, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		Active = true,
+	}, track)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+
+	local function clampValue(v)
+		return math.clamp(math.floor(v / step + 0.5) * step, minV, maxV)
+	end
+
+	local function paint()
+		local v = get()
+		local alpha = (maxV > minV) and math.clamp((v - minV) / (maxV - minV), 0, 1) or 0
+		fill.Size = UDim2.fromScale(alpha, 1)
+		knob.Position = UDim2.fromScale(alpha, 0.5)
+		valueLabel.Text = format(v)
+		local active = v > 0
+		valueLabel.TextColor3 = active and ac or THEME.dim
+		fill.BackgroundColor3 = active and ac or THEME.off
+		knob.BackgroundColor3 = active and Color3.new(1, 1, 1) or THEME.dim
+	end
+
+	local dragging = false
+
+	local function setFromX(x)
+		local absX = track.AbsolutePosition.X
+		local width = math.max(track.AbsoluteSize.X, 1)
+		local alpha = math.clamp((x - absX) / width, 0, 1)
+		set(clampValue(minV + alpha * (maxV - minV)))
+		paint()
+		if Speed.humanoid then writeSpeed(Speed.humanoid) end
+	end
+
+	local function beginDrag(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			setFromX(input.Position.X)
+		end
+	end
+
+	track.InputBegan:Connect(beginDrag)
+	knob.InputBegan:Connect(beginDrag)
+
+	RootJanitor.connect(UserInputService.InputChanged, function(input)
+		if not dragging then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
+			setFromX(input.Position.X)
+		end
+	end)
+
+	RootJanitor.connect(UserInputService.InputEnded, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+
+	resetBtn.MouseButton1Click:Connect(function()
+		set(minV) -- 0 = inactive
+		paint()
+		if Speed.humanoid then writeSpeed(Speed.humanoid) end
+	end)
+
+	paint()
+	return row, paint
+end
+
 -- Wiring --------------------------------------------------------------
 addSectionLabel("walk speed")
 addStepper("fast speed", "fast",
@@ -710,10 +868,12 @@ task.spawn(function()
 			local base = baseRaw(hm)
 			local sprintRaw = Speed.sprintRaw or (base * Config.SprintFactor)
 			local mult = activeMultiplier()
+			local raw = shiftHeld() and sprintRaw or (Speed.walkRaw or base)
+			local final = raw * mult * raceMultiplier()
 			local tag = shiftHeld() and "SPRINT" or "walk"
 			sprintLabel.Text = string.format(
-				"%s · raw %.0f/%.0f → %.0f · x%.2f",
-				tag, Speed.walkRaw or base, sprintRaw, (shiftHeld() and sprintRaw or (Speed.walkRaw or base)) * mult, mult
+				"%s · %.0f x%.2f x%d = %.0f studs/s",
+				tag, raw, mult, math.floor(raceMultiplier() + 0.5), final
 			)
 			sprintLabel.TextColor3 = shiftHeld() and THEME.accent or THEME.dim
 		else
@@ -731,6 +891,32 @@ addToggle("zen glow",
 addToggle("glitch trail",
 	function() return State.GlitchActive end,
 	function(v) State.GlitchActive = v end)
+
+-- ── RACE SPEED (stacks on top of in-game speed × multiplier) ──────────
+addSectionLabel("race speed")
+
+addSlider(
+	"race boost",
+	function() return State.RaceSpeed or 0 end,
+	function(v) State.RaceSpeed = v end,
+	0, Config.MaxRaceSpeed, Config.RaceStep,
+	function(v)
+		if v <= 0 then return "off" end
+		return "x" .. string.format("%d", math.floor(v + 0.5))
+	end
+)
+
+new("TextLabel", {
+	Size = UDim2.new(1, -4, 0, 26),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	TextSize = 9.5,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextColor3 = THEME.dim,
+	Text = "final = game speed x walk multiplier x race boost. 0 = inactive.",
+}, content)
 
 new("TextLabel", {
 	Size = UDim2.new(1, 0, 0, 14),
