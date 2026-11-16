@@ -809,7 +809,7 @@ new("TextLabel", {
 	Size = UDim2.new(1, -58, 1, 0), Position = UDim2.fromOffset(11, 0),
 	BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 12,
 	TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = THEME.text,
-	Text = "race toggle (auto x10)",
+	Text = "race toggle (walk x10)",
 }, rtRow)
 local rtSwitch = new("TextButton", {
 	Size = UDim2.fromOffset(38, 20), Position = UDim2.new(1, -48, 0.5, 0),
@@ -834,19 +834,24 @@ rtSwitch.MouseButton1Click:Connect(function()
 	Boost.raceToggle = not Boost.raceToggle
 
 	if Boost.raceToggle then
-		-- True race mode: instantly lock to x10 the moment the toggle is on.
-		Boost.holding = false
-		Boost.value = Config.MaxRaceSpeed
-		State.RaceSpeed = Config.MaxRaceSpeed
+		-- Race toggle ON = slam walk speed multiplier to x10 instantly.
+		State.CurrentSpeedMultiplier = Config.MaxSpeedMultiplier
+		State.SpeedMode = "Fast"
+		-- Update the walk speed stepper readout to reflect x10.
+		if stepperRegistry.fast then
+			stepperRegistry.fast.val.Text = string.format("%.2fx", State.CurrentSpeedMultiplier)
+		end
+		updateStepperVisuals()
 	else
-		-- Toggle off = release any held pedal state and drop race speed fully.
-		setPedalHeld(false)
-		Boost.value = 0
-		State.RaceSpeed = 0
+		-- Race toggle OFF = reset walk speed multiplier back to x1.
+		State.CurrentSpeedMultiplier = 1.0
+		if stepperRegistry.fast then
+			stepperRegistry.fast.val.Text = string.format("%.2fx", State.CurrentSpeedMultiplier)
+		end
+		updateStepperVisuals()
 	end
 
 	paintRaceToggle()
-	paintPedal()
 	if Speed.humanoid then writeSpeed(Speed.humanoid) end
 end)
 paintRaceToggle()
@@ -1012,8 +1017,7 @@ paintPedal = function()
 	local alpha = math.clamp(Boost.value / Config.MaxRaceSpeed, 0, 1)
 	local on    = Boost.value > 0.01
 	local multStr = on and string.format("x%.2f", raceMultiplier()) or "off"
-	local btnClr = Boost.raceToggle and Color3.fromRGB(166, 255, 196)
-		or Boost.holding and Color3.fromRGB(166, 255, 196)
+	local btnClr = Boost.holding and Color3.fromRGB(166, 255, 196)
 		or (on and THEME.accent or Color3.fromRGB(52, 120, 80))
 
 	for _, fl in ipairs(ALL_FILLS)  do fl.Size = UDim2.fromScale(alpha, 1) end
@@ -1090,21 +1094,15 @@ RootJanitor.connect(RunService.RenderStepped, function()
 	lastPedalTick = now
 
 	local before = Boost.value
-	if Boost.raceToggle then
-		-- Race Toggle is now a hard lock: ON = x10 instantly and continuously.
-		Boost.value = Config.MaxRaceSpeed
+	if Boost.holding then
+		Boost.value = math.min(Config.MaxRaceSpeed, Boost.value + BOOST_RAMP_UP * dt)
 	else
-		if Boost.holding then
-			Boost.value = math.min(Config.MaxRaceSpeed, Boost.value + BOOST_RAMP_UP * dt)
-		else
-			Boost.value = math.max(0, Boost.value - BOOST_RAMP_DOWN * dt)
-		end
+		Boost.value = math.max(0, Boost.value - BOOST_RAMP_DOWN * dt)
 	end
 	State.RaceSpeed = Boost.value
 
 	if math.abs(Boost.value - before) > 0.0005 then
 		paintPedal()
-		if Speed.humanoid then writeSpeed(Speed.humanoid) end
 	end
 end)
 
@@ -1119,7 +1117,7 @@ new("TextLabel", {
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextYAlignment = Enum.TextYAlignment.Top,
 	TextColor3 = THEME.dim,
-	Text = "hold BOOST for manual ramp · race toggle locks x10 instantly",
+	Text = "hold BOOST · release to coast off · race toggle sets walk x10",
 }, content)
 
 new("TextLabel", {
