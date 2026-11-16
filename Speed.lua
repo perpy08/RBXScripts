@@ -464,11 +464,40 @@ local function new(className, props, parent)
 	return inst
 end
 
+-- Where can our GUI live without the game deleting it? Order matters:
+--   1. gethui()   - executor-hidden container, invisible to game scripts
+--   2. CoreGui    - protected on most executors (syn.protect_gui if present)
+--   3. PlayerGui  - last resort: many games purge unknown ScreenGuis here,
+--                   which was the "speed works, GUI missing" bug.
+local function resolveGuiParent()
+	if type(gethui) == "function" then
+		local ok, hui = pcall(gethui)
+		if ok and typeof(hui) == "Instance" then
+			return hui, "gethui()"
+		end
+	end
+	local coreGui = game:GetService("CoreGui")
+	local probe = Instance.new("ScreenGui")
+	local ok = pcall(function() probe.Parent = coreGui end)
+	if ok then
+		pcall(function() if syn and syn.protect_gui then syn.protect_gui(probe) end end)
+		pcall(function() if protectgui then protectgui(probe) end end)
+		probe:Destroy()
+		return coreGui, "CoreGui"
+	end
+	probe:Destroy()
+	return LocalPlayer:WaitForChild("PlayerGui"), "PlayerGui"
+end
+local GuiParent, GuiParentName = resolveGuiParent()
+
 local PanelGui = Instance.new("ScreenGui")
 PanelGui.Name = "ZenGlitchSpeedPanel"
 PanelGui.ResetOnSpawn = false
 PanelGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 PanelGui.DisplayOrder = 999
+-- Parent FIRST, build after: previously the GUI was parented at the very end
+-- of the script, so one silent error anywhere below = panel never showed.
+PanelGui.Parent = GuiParent
 
 local panel = new("Frame", {
 	Size = UDim2.fromOffset(276, 0),
@@ -868,7 +897,7 @@ RootJanitor.connect(UserInputService.InputChanged, function(input)
 end)
 
 RootJanitor.add(boostHudGui)
-boostHudGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+boostHudGui.Parent = GuiParent
 
 -- Shared meter widget factory ------------------------------------------
 local ALL_FILLS  = {}
@@ -1129,8 +1158,46 @@ end)
 
 -- Boot ----------------------------------------------------------------
 RootJanitor.add(PanelGui)
-PanelGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+PanelGui.Parent = GuiParent -- re-assert (already parented right after creation)
 saveSettings()
+
+-- Watchdog: if the game's anti-cheat purges the panel, fight back.
+-- Runtime.alive is false during a real unload, so the × button still cleans up.
+RootJanitor.connect(PanelGui.AncestryChanged, function(_, parent)
+	if parent or not Runtime.alive then return end
+	warn("[ZenGlitch] panel was removed (anti-cheat purge) — attempting recovery via " .. GuiParentName)
+	task.defer(function()
+		if not Runtime.alive then return end
+		-- If the instance was only unparented this puts it straight back.
+		local ok = pcall(function() PanelGui.Parent = GuiParent end)
+		if ok and PanelGui.Parent then return end
+		-- Instance was hard-destroyed: Parent is locked, so rebuild from source.
+		-- Capped at 3 rebuilds per session so hostile games can't loop us.
+		_G.__ZenGlitchSpeedRebuilds = (_G.__ZenGlitchSpeedRebuilds or 0) + 1
+		if _G.__ZenGlitchSpeedRebuilds > 3 then
+			warn("[ZenGlitch] panel destroyed too many times — giving up. Re-execute manually.")
+			return
+		end
+		task.wait(1.5)
+		if not Runtime.alive then return end
+		warn("[ZenGlitch] rebuilding GUI (attempt " .. _G.__ZenGlitchSpeedRebuilds .. "/3)")
+		local okGet, res = pcall(game.HttpGet, game,
+			"https://raw.githubusercontent.com/perpy08/RBXScripts/main/Speed.lua")
+		if okGet and res then
+			local fn = loadstring(res)
+			if fn then fn() end
+		end
+	end)
+end)
+
+print(string.format("[ZenGlitch] panel alive → parented to %s (%s)",
+	PanelGui:GetFullName(), GuiParentName))
+task.spawn(function()
+	task.wait(1)
+	if Runtime.alive and not PanelGui.Parent then
+		warn("[ZenGlitch] panel missing 1s after boot — watchdog recovery engaged")
+	end
+end)
 
 -- Auto-reload across teleports (Speed.lua)
 if queue_on_teleport then
