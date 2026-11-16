@@ -60,6 +60,7 @@ local State = {
 	RaceSpeed              = 0,      -- 0 = race boost inactive, else 0.5..10
 	KillGlowActive         = false,
 	GlitchActive           = false,
+	CameraLockActive       = false,
 }
 if _saved then
 	local src = _saved.State or _saved
@@ -443,6 +444,40 @@ function Glow.setEnabled(on)
 end
 
 -- =====================================================================
+--  3.5 · CAMERA LOCK
+-- =====================================================================
+local CameraLock = { conn = nil }
+RootJanitor.add({ clean = function() CameraLock.setEnabled(false) end })
+
+function CameraLock.setEnabled(on)
+	State.CameraLockActive = on
+	if on then
+		if not CameraLock.conn then
+			CameraLock.conn = RunService.RenderStepped:Connect(function()
+				UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+				local char = LocalPlayer.Character
+				local root = char and char:FindFirstChild("HumanoidRootPart")
+				local cam = workspace.CurrentCamera
+				if root and cam then
+					local look = cam.CFrame.LookVector
+					local dir = Vector3.new(look.X, 0, look.Z)
+					if dir.Magnitude > 0.001 then
+						root.CFrame = CFrame.lookAt(root.Position, root.Position + dir)
+					end
+				end
+			end)
+		end
+	else
+		if CameraLock.conn then
+			CameraLock.conn:Disconnect()
+			CameraLock.conn = nil
+		end
+		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+	end
+end
+CameraLock.setEnabled(State.CameraLockActive)
+
+-- =====================================================================
 --  4 · CONTROL PANEL
 -- =====================================================================
 local THEME = {
@@ -783,6 +818,11 @@ task.spawn(function()
 		task.wait(0.15)
 	end
 end)
+
+addSectionLabel("camera")
+addToggle("camera lock",
+	function() return State.CameraLockActive end,
+	CameraLock.setEnabled)
 
 addSectionLabel("visuals")
 addToggle("zen glow",
