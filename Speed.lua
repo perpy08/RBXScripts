@@ -764,6 +764,8 @@ addToggle("glitch trail",
 	function(v) State.GlitchActive = v end)
 
 -- ── RACE SPEED ──────────────────────────────────────────────────────────
+local Boost = { holding = false, value = 0, raceToggle = false }
+
 addSectionLabel("race speed")
 
 -- Race Toggle toggle row (binds boost to Shift when on)
