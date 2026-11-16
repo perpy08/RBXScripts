@@ -10,7 +10,7 @@
     · Glitch trail- stripped ghost clones, one shared Heartbeat
     · Persistence - ZenGlitch_Speed.json, restored on load
     · Auto-reload - Speed.lua on teleport
-    · Race Speed  - draggable 0..1000 slider, 0 = inactive
+    · Race Speed  - draggable 0..x10 slider with RESET, 0 = inactive
                     final = game speed x walk multiplier x race
 =====================================================================
 ]]
@@ -33,8 +33,8 @@ local Config = {
 	MinSpeedMultiplier = 0.1,
 	SprintFactor       = 1.6,     -- used only when the game never raises WalkSpeed
 	MaxRawFactor       = 6,       -- ignore absurd raw values to avoid feedback loops
-	MaxRaceSpeed       = 1000,    -- race slider ceiling
-	RaceStep           = 25,      -- slider snap
+	MaxRaceSpeed       = 10,      -- race slider ceiling
+	RaceStep           = 0.5,     -- slider snap
 	MaxAbsoluteSpeed   = 250000,  -- hard ceiling we will ever write
 	GhostFrameTime     = 0.33,
 	GhostLifetime      = 0.35,
@@ -58,7 +58,7 @@ local State = {
 	CurrentSpeedMultiplier = 1.0,
 	SlowSpeedMultiplier    = 1.0,
 	SpeedMode              = "Fast", -- "Fast" | "Slow"
-	RaceSpeed              = 0,      -- 0 = race boost inactive, else 1..1000
+	RaceSpeed              = 0,      -- 0 = race boost inactive, else 0.5..10
 	KillGlowActive         = false,
 	GlitchActive           = false,
 }
@@ -691,7 +691,7 @@ local function addSlider(label, get, set, minV, maxV, step, format, accentOverri
 	new("UICorner", { CornerRadius = UDim.new(0, 8) }, row)
 
 	new("TextLabel", {
-		Size = UDim2.new(1, -132, 0, 18),
+		Size = UDim2.new(1, -166, 0, 18),
 		Position = UDim2.fromOffset(11, 8),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
@@ -702,27 +702,32 @@ local function addSlider(label, get, set, minV, maxV, step, format, accentOverri
 	}, row)
 
 	local valueLabel = new("TextLabel", {
-		Size = UDim2.new(0, 74, 0, 18),
-		Position = UDim2.new(1, -104, 0, 8),
+		Size = UDim2.new(0, 56, 0, 18),
+		Position = UDim2.new(1, -108, 0, 8),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		TextSize = 11,
 		TextXAlignment = Enum.TextXAlignment.Right,
 		TextColor3 = ac,
 		Text = format(get()),
+		Active = true,
+		ZIndex = 4,
 	}, row)
 
+	-- Real text label: the old "↺" glyph is missing from Gotham and rendered blank
 	local resetBtn = new("TextButton", {
-		Size = UDim2.fromOffset(22, 18),
-		Position = UDim2.new(1, -24, 0, 8),
+		Size = UDim2.fromOffset(42, 18),
+		Position = UDim2.new(1, -46, 0, 8),
 		BackgroundColor3 = THEME.off,
 		TextColor3 = THEME.text,
 		Font = Enum.Font.GothamBold,
-		TextSize = 11,
-		Text = "↺",
+		TextSize = 9,
+		Text = "RESET",
 		AutoButtonColor = false,
+		ZIndex = 6,
 	}, row)
 	new("UICorner", { CornerRadius = UDim.new(0, 5) }, resetBtn)
+	new("UIStroke", { Color = THEME.stroke, Thickness = 1 }, resetBtn)
 
 	local track = new("Frame", {
 		Size = UDim2.new(1, -28, 0, 8),
@@ -804,10 +809,42 @@ local function addSlider(label, get, set, minV, maxV, step, format, accentOverri
 		end
 	end)
 
-	resetBtn.MouseButton1Click:Connect(function()
+	local function resetToDefault()
+		dragging = false
 		set(minV) -- 0 = inactive
 		paint()
 		if Speed.humanoid then writeSpeed(Speed.humanoid) end
+	end
+
+	resetBtn.MouseButton1Click:Connect(function()
+		resetToDefault()
+		-- visible confirmation that the reset registered
+		resetBtn.Text = "OFF"
+		resetBtn.BackgroundColor3 = ac
+		resetBtn.TextColor3 = THEME.bg
+		task.delay(0.55, function()
+			if resetBtn.Parent then
+				resetBtn.Text = "RESET"
+				resetBtn.BackgroundColor3 = THEME.off
+				resetBtn.TextColor3 = THEME.text
+			end
+		end)
+	end)
+
+	resetBtn.MouseEnter:Connect(function()
+		resetBtn.BackgroundColor3 = THEME.stroke
+	end)
+	resetBtn.MouseLeave:Connect(function()
+		if resetBtn.Text == "RESET" then
+			resetBtn.BackgroundColor3 = THEME.off
+		end
+	end)
+
+	-- Double-clicking the value label also resets
+	valueLabel.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			resetToDefault()
+		end
 	end)
 
 	paint()
@@ -902,7 +939,10 @@ addSlider(
 	0, Config.MaxRaceSpeed, Config.RaceStep,
 	function(v)
 		if v <= 0 then return "off" end
-		return "x" .. string.format("%d", math.floor(v + 0.5))
+		if math.abs(v - math.floor(v + 0.5)) < 0.01 then
+			return string.format("x%d", math.floor(v + 0.5))
+		end
+		return string.format("x%.1f", v)
 	end
 )
 
@@ -915,7 +955,7 @@ new("TextLabel", {
 	TextXAlignment = Enum.TextXAlignment.Left,
 	TextYAlignment = Enum.TextYAlignment.Top,
 	TextColor3 = THEME.dim,
-	Text = "final = game speed x walk multiplier x race boost. 0 = inactive.",
+	Text = "final = game speed x walk multiplier x race boost (0 - x10). 0 = inactive.",
 }, content)
 
 new("TextLabel", {
