@@ -41,7 +41,7 @@ local Config = {
 	GhostMaxLive       = 8,    -- concurrent ghost clones in workspace
 	DashKey            = Enum.KeyCode.Q,
 	DashDistance       = 30,   -- studs covered by one dash
-	DashTime           = 0.2,  -- seconds the dash lasts (30 studs = 150 studs/s)
+	DashTime           = 0.6,  -- seconds the dash + pose run (30 studs = 50 studs/s)
 	DashCooldown       = 0.05, -- "infinite": just debounces key repeat
 	AutoCastMinSeconds = 0.02, -- floor for the interval (the frame rate caps it anyway)
 	AutoCastTapSeconds = 0.03, -- how long each injected press is held down
@@ -974,24 +974,81 @@ AutoCast.sync()
 -- =====================================================================
 --  5c · INF DASH
 -- =====================================================================
--- Q dashes DashDistance studs the way the character is facing, with no
--- cooldown. Roblox can't author an animation asset at runtime, so the dash
--- pose is driven straight through the character's Motor6D joints instead.
+-- Q dashes DashDistance studs in whichever horizontal direction you are
+-- moving (or straight ahead if you are standing still), with no cooldown.
+-- Roblox cannot author an animation asset at runtime, and setting C0 on
+-- Heartbeat alone gets drowned out by the Animator's running animation
+-- writing to Motor6D.Transform every frame. So the dash pose is applied on
+-- RunService.Stepped (right after the Animator steps), wiping Transform on
+-- the posed joints and tilting the rig toward the dash direction for the
+-- entire 0.6 s dash.
 local InfDash = { run = nil, lastEnd = 0 }
 
--- Degrees. Every rotation is about the parent part's X axis: a positive angle
--- swings a limb forward, a negative one swings it back. The leaning body
--- carries the legs with it, so the legs end up at leftHip - lean (forward)
--- and rightHip - lean (further back).
-local DASH_POSE = { lean = 14, leftHip = 38, rightHip = -24 }
-local POSE_IN, POSE_OUT = 0.06, 0.14        -- ease-in / ease-out, seconds
+-- Degrees in Part0's local axes (+X right, +Y up, -Z forward).
+-- Around +X: negative pitches the torso forward, positive swings a hanging leg forward.
+-- Around +Z: negative banks the torso right, positive banks it left.
+local DASH_POSE = {
+	lean     = 18,  -- root tilt toward the dash direction
+	waist    = 10,  -- extra upper-torso lean on R15 so the tilt reads clearly
+	leftHip  = 38,  -- left leg forward
+	rightHip = -26, -- right leg back
+	knee     = -18, -- slight knee bend on R15 so the legs don't look stiff
+	arm      = -24, -- arms swept slightly opposite the dash
+}
+local POSE_IN, POSE_OUT = 0.08, 0.10        -- ease-in / ease-out inside Config.DashTime
 
 local function smooth(x)
 	x = math.clamp(x, 0, 1)
 	return x * x * (3 - 2 * x)
 end
 
--- The three joints that carry the pose, for either rig type
+-- Whichever horizontal direction the player is currently going:
+--   1. Humanoid.MoveDirection (works for WASD, shift-lock, thumbsticks)
+--   2. Held WASD / arrow keys relative to the camera if MoveDirection hasn't ticked yet
+--   3. Character facing direction when standing completely still
+local function dashDirection(humanoid, root)
+	local move = humanoid.MoveDirection
+	local flatMove = Vector3.new(move.X, 0, move.Z)
+	if flatMove.Magnitude > 0.01 then
+		return flatMove.Unit
+	end
+
+	local cam = workspace.CurrentCamera
+	local basis = (cam and cam.CFrame) or root.CFrame
+	local fwd = Vector3.new(basis.LookVector.X, 0, basis.LookVector.Z)
+	local right = Vector3.new(basis.RightVector.X, 0, basis.RightVector.Z)
+	local wish = Vector3.new(0, 0, 0)
+	if fwd.Magnitude > 0.01 then
+		fwd = fwd.Unit
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Up) then
+			wish = wish + fwd
+		end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.Down) then
+			wish = wish - fwd
+		end
+	end
+	if right.Magnitude > 0.01 then
+		right = right.Unit
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+			wish = wish + right
+		end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
+			wish = wish - right
+		end
+	end
+	if wish.Magnitude > 0.01 then
+		return wish.Unit
+	end
+
+	local look = root.CFrame.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	if flatLook.Magnitude > 0.01 then
+		return flatLook.Unit
+	end
+	return nil
+end
+
+-- Joints that carry the dash pose, for either rig type
 local function dashJoints(char, humanoid)
 	local found = {}
 	local function add(partName, jointName, role)
@@ -1003,29 +1060,63 @@ local function dashJoints(char, humanoid)
 	end
 	if humanoid.RigType == Enum.HumanoidRigType.R15 then
 		add("LowerTorso", "Root", "lean")
+		add("UpperTorso", "Waist", "waist")
 		add("LeftUpperLeg", "LeftHip", "left")
 		add("RightUpperLeg", "RightHip", "right")
+		add("LeftLowerLeg", "LeftKnee", "knee")
+		add("RightLowerLeg", "RightKnee", "knee")
+		add("LeftUpperArm", "LeftShoulder", "arm")
+		add("RightUpperArm", "RightShoulder", "arm")
 	else
 		add("HumanoidRootPart", "RootJoint", "lean")
 		add("Torso", "Left Hip", "left")
 		add("Torso", "Right Hip", "right")
+		add("Torso", "Left Shoulder", "arm")
+		add("Torso", "Right Shoulder", "arm")
 	end
 	return found
 end
 
-local function posedC0(entry, weight)
-	local degrees = DASH_POSE.rightHip
-	if entry.role == "lean" then
-		degrees = -DASH_POSE.lean           -- negative about X pitches the body forward
-	elseif entry.role == "left" then
-		degrees = DASH_POSE.leftHip
+-- Rotation in Part0's axes (+X right, +Y up, -Z forward), scaled by weight.
+-- fwdDot (+1 ahead, -1 behind) and rightDot (+1 right, -1 left) tilt the
+-- character toward the world-space dash direction regardless of facing.
+local function posedRotation(entry, weight, fwdDot, rightDot)
+	local pitch, roll = 0, 0
+	local role = entry.role
+	if role == "lean" then
+		pitch = -fwdDot * DASH_POSE.lean
+		roll  = -rightDot * DASH_POSE.lean
+	elseif role == "waist" then
+		pitch = -fwdDot * DASH_POSE.waist
+		roll  = -rightDot * DASH_POSE.waist
+	elseif role == "left" then
+		pitch = DASH_POSE.leftHip
+		roll  = -rightDot * (DASH_POSE.lean * 0.35)
+	elseif role == "right" then
+		pitch = DASH_POSE.rightHip
+		roll  = -rightDot * (DASH_POSE.lean * 0.35)
+	elseif role == "knee" then
+		pitch = DASH_POSE.knee
+	elseif role == "arm" then
+		local dirSign = (math.abs(fwdDot) >= 0.1) and fwdDot or 1
+		pitch = dirSign * DASH_POSE.arm
 	end
+	return CFrame.Angles(math.rad(pitch) * weight, 0, math.rad(roll) * weight)
+end
+
+local function applyJointPose(entry, weight, fwdDot, rightDot)
 	local base = entry.base
-	-- Rotate about the joint's own pivot, in the parent part's axes, so this is
-	-- right whatever orientation a rig's C0 happens to have (R6 differs from R15).
-	return CFrame.new(base.Position)
-		* CFrame.Angles(math.rad(degrees) * weight, 0, 0)
-		* (base - base.Position)
+	local baseRot = base - base.Position
+	local rot = posedRotation(entry, weight, fwdDot, rightDot)
+	-- Wipe the Animator's walk/run keyframe on this joint first
+	pcall(function() entry.joint.Transform = CFrame.new() end)
+	local ok = pcall(function()
+		entry.joint.C0 = CFrame.new(base.Position) * rot * baseRot
+	end)
+	if not ok then
+		-- Fallback when C0 is locked (AvatarJointUpgrade): conjugate into Transform
+		pcall(function() entry.joint.Transform = baseRot:Inverse() * rot * baseRot end)
+	end
 end
 
 local function stopMove(run)
@@ -1037,7 +1128,7 @@ local function stopMove(run)
 		run.attachment = nil
 	end
 	if run.root.Parent then
-		-- keep falling, but drop the dash momentum so we don't skate off afterwards
+		-- keep vertical velocity, drop horizontal dash momentum
 		local v = run.root.AssemblyLinearVelocity
 		run.root.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
 	end
@@ -1048,10 +1139,17 @@ function InfDash.cancel()
 	if not run then return end
 	InfDash.run = nil
 	InfDash.lastEnd = os.clock()
+	if run.stepConn then run.stepConn:Disconnect() end
 	if run.conn then run.conn:Disconnect() end
 	stopMove(run)
+	if run.humanoid and run.humanoid.Parent and run.autoRotate ~= nil then
+		run.humanoid.AutoRotate = run.autoRotate
+	end
 	for _, entry in ipairs(run.joints) do
-		if entry.joint.Parent then entry.joint.C0 = entry.base end
+		if entry.joint.Parent then
+			pcall(function() entry.joint.C0 = entry.base end)
+			pcall(function() entry.joint.Transform = CFrame.new() end)
+		end
 	end
 end
 
@@ -1063,24 +1161,20 @@ function InfDash.start()
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not humanoid or not root or humanoid.Health <= 0 or humanoid.Sit then return end
 
-	-- Forward = the way the character faces, flattened onto the ground
-	local look = root.CFrame.LookVector
-	local dir = Vector3.new(look.X, 0, look.Z)
-	if dir.Magnitude < 0.01 then return end
-	dir = dir.Unit
+	local dir = dashDirection(humanoid, root)
+	if not dir then return end
 
-	-- Stop short of walls: rays from head, chest and feet; the nearest hit wins.
-	-- (At ~150 studs/s a thin wall could otherwise be tunnelled straight through.)
+	-- Stop short of walls: rays from head, chest and feet; the nearest hit wins
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { char }
-	params.RespectCanCollide = true         -- triggers and decor don't block a dash
+	params.RespectCanCollide = true
 
 	local distance = Config.DashDistance
 	for _, height in ipairs({ 1.5, 0, -2 }) do
 		local origin = root.Position + Vector3.new(0, height, 0)
 		local hit = workspace:Raycast(origin, dir * (Config.DashDistance + 2), params)
-		if hit then distance = math.min(distance, math.max(hit.Distance - 2, 0)) end   -- 2 = body radius
+		if hit then distance = math.min(distance, math.max(hit.Distance - 2, 0)) end
 	end
 	if distance < 1 then return end
 
@@ -1099,8 +1193,14 @@ function InfDash.start()
 	mover.VectorVelocity = dir * (distance / Config.DashTime)
 	mover.Parent = root
 
+	local prevAutoRotate = humanoid.AutoRotate
+	humanoid.AutoRotate = false
+
 	local run = {
+		humanoid = humanoid,
+		autoRotate = prevAutoRotate,
 		root = root,
+		dir = dir,
 		attachment = attachment,
 		mover = mover,
 		joints = dashJoints(char, humanoid),
@@ -1108,21 +1208,35 @@ function InfDash.start()
 	}
 	InfDash.run = run
 
-	-- Only exists for the length of one dash: ease the pose in, hold it while
-	-- moving, ease it back out, then restore every joint exactly.
-	run.conn = RunService.Heartbeat:Connect(function()
+	-- Runs for the entire Config.DashTime (0.6 s): ease in, hold the tilt in
+	-- the dash direction, ease out at the end, then restore every joint.
+	local function stepDash()
+		if InfDash.run ~= run then return end
 		local t = os.clock() - run.startedAt
-		if t >= Config.DashTime then stopMove(run) end
-
-		local weight = smooth(t / POSE_IN) * (1 - smooth((t - Config.DashTime) / POSE_OUT))
-		for _, entry in ipairs(run.joints) do
-			if entry.joint.Parent then entry.joint.C0 = posedC0(entry, weight) end
-		end
-
-		if t >= Config.DashTime + POSE_OUT or not root.Parent or humanoid.Health <= 0 then
+		if t >= Config.DashTime or not root.Parent or humanoid.Health <= 0 then
 			InfDash.cancel()
+			return
 		end
-	end)
+
+		local fadeOutStart = math.max(POSE_IN, Config.DashTime - POSE_OUT)
+		local weight = smooth(t / POSE_IN) * (1 - smooth((t - fadeOutStart) / POSE_OUT))
+
+		local look = root.CFrame.LookVector
+		local right = root.CFrame.RightVector
+		local fwdDot = math.clamp(look.X * run.dir.X + look.Z * run.dir.Z, -1, 1)
+		local rightDot = math.clamp(right.X * run.dir.X + right.Z * run.dir.Z, -1, 1)
+
+		for _, entry in ipairs(run.joints) do
+			if entry.joint.Parent then
+				applyJointPose(entry, weight, fwdDot, rightDot)
+			end
+		end
+	end
+
+	if RunService.Stepped then
+		run.stepConn = RunService.Stepped:Connect(stepDash)
+	end
+	run.conn = RunService.Heartbeat:Connect(stepDash)
 end
 
 RootJanitor.connect(UserInputService.InputBegan, function(input, gameProcessed)
