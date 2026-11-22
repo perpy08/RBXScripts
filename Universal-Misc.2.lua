@@ -975,13 +975,15 @@ AutoCast.sync()
 --  5c · INF DASH
 -- =====================================================================
 -- Q dashes DashDistance studs in whichever horizontal direction you are
--- moving (or straight ahead if you are standing still), with no cooldown.
--- Roblox cannot author an animation asset at runtime, and setting C0 on
--- Heartbeat alone gets drowned out by the Animator's running animation
--- writing to Motor6D.Transform every frame. So the dash pose is applied on
--- RunService.Stepped (right after the Animator steps), wiping Transform on
--- the posed joints and tilting the rig toward the dash direction for the
--- entire 0.6 s dash.
+-- moving (or straight ahead if you are standing still), with no cooldown:
+--   · Anti-trip: disables FallingDown / Ragdoll states and locks root
+--     upright with an AlignOrientation + zeroed angular velocity so the
+--     character never trips or stumbles during or after a dash.
+--   · Phase-through: ignores players and NPCs in the wall probe and disables
+--     CanCollide on their body parts on RunService.Stepped for the duration
+--     of the dash, restoring every part when the dash finishes.
+--   · Directional pose: applied on RunService.Stepped (right after the
+--     Animator steps), wiping Transform on posed joints for the full 0.6 s.
 local InfDash = { run = nil, lastEnd = 0 }
 
 -- Degrees in Part0's local axes (+X right, +Y up, -Z forward).
@@ -997,9 +999,124 @@ local DASH_POSE = {
 }
 local POSE_IN, POSE_OUT = 0.08, 0.10        -- ease-in / ease-out inside Config.DashTime
 
+-- Own character limb parts whose CanCollide is suppressed mid-dash so a
+-- tilted leg or foot never snags a floor seam and trips the rig.
+local SELF_LIMBS = {
+	LeftFoot = true, RightFoot = true,
+	LeftLowerLeg = true, RightLowerLeg = true,
+	LeftUpperLeg = true, RightUpperLeg = true,
+	LeftHand = true, RightHand = true,
+	LeftLowerArm = true, RightLowerArm = true,
+	LeftUpperArm = true, RightUpperArm = true,
+	["Left Leg"] = true, ["Right Leg"] = true,
+	["Left Arm"] = true, ["Right Arm"] = true,
+}
+
 local function smooth(x)
 	x = math.clamp(x, 0, 1)
 	return x * x * (3 - 2 * x)
+end
+
+-- Prevent the Humanoid from entering FallingDown / Ragdoll (the states that
+-- make a character trip and stumble around when moving fast over seams).
+local function setAntiTrip(humanoid, enabled)
+	if not humanoid or not humanoid.Parent then return end
+	pcall(function()
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, not enabled)
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, not enabled)
+	end)
+	if enabled then
+		local ok, state = pcall(function() return humanoid:GetState() end)
+		if ok and (state == Enum.HumanoidStateType.FallingDown
+			or state == Enum.HumanoidStateType.Ragdoll
+			or state == Enum.HumanoidStateType.PlatformStand) then
+			humanoid.PlatformStand = false
+			pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Running) end)
+		end
+	end
+end
+
+-- If `inst` belongs to a player character or an NPC rig, return that Model.
+local function actorModelOf(inst, selfChar)
+	local node = inst
+	while node and node ~= workspace do
+		if node:IsA("Model") and node ~= selfChar then
+			if node:FindFirstChildOfClass("Humanoid")
+				or node:FindFirstChildOfClass("AnimationController") then
+				return node
+			end
+		end
+		node = node.Parent
+	end
+	return nil
+end
+
+local function ghostPart(run, part)
+	if not part or not part:IsA("BasePart") then return end
+	if run.ghostedParts[part] == nil then
+		run.ghostedParts[part] = part.CanCollide
+	end
+	part.CanCollide = false
+end
+
+local function ghostModel(run, model)
+	if not model or run.ghostedModels[model] then return end
+	run.ghostedModels[model] = true
+	for _, desc in ipairs(model:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			ghostPart(run, desc)
+		end
+	end
+end
+
+-- Gather nearby players and NPCs so we can pass right through them.
+local function collectPhaseTargets(run, char, root)
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and player.Character then
+			ghostModel(run, player.Character)
+		end
+	end
+
+	local maxRange = Config.DashDistance + 20
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("Humanoid") or desc:IsA("AnimationController") then
+			local model = desc.Parent
+			if model and model:IsA("Model") and model ~= char and not run.ghostedModels[model] then
+				local pivot = model:FindFirstChild("HumanoidRootPart")
+					or model.PrimaryPart
+					or model:FindFirstChildWhichIsA("BasePart")
+				if not pivot or (pivot.Position - root.Position).Magnitude <= maxRange then
+					ghostModel(run, model)
+				end
+			end
+		end
+	end
+
+	-- Suppress CanCollide on our own limbs so tilted legs never snag the floor
+	for _, desc in ipairs(char:GetDescendants()) do
+		if desc:IsA("BasePart") and (SELF_LIMBS[desc.Name] or desc:FindFirstAncestorOfClass("Accessory") or desc:FindFirstAncestorOfClass("Tool")) then
+			ghostPart(run, desc)
+		end
+	end
+end
+
+-- Re-assert CanCollide = false every Stepped frame (Humanoid re-enables
+-- Torso / UpperTorso / LowerTorso collision each step).
+local function maintainPhase(run, char, root)
+	if workspace.GetPartBoundsInRadius then
+		local ok, parts = pcall(workspace.GetPartBoundsInRadius, workspace, root.Position, 10)
+		if ok and parts then
+			for _, part in ipairs(parts) do
+				local model = actorModelOf(part, char)
+				if model then ghostModel(run, model) end
+			end
+		end
+	end
+	for part in pairs(run.ghostedParts) do
+		if part.Parent then
+			part.CanCollide = false
+		end
+	end
 end
 
 -- Whichever horizontal direction the player is currently going:
@@ -1120,18 +1237,32 @@ local function applyJointPose(entry, weight, fwdDot, rightDot)
 end
 
 local function stopMove(run)
-	if not run.mover then return end
-	run.mover:Destroy()
-	run.mover = nil
+	if run.gyro then
+		run.gyro:Destroy()
+		run.gyro = nil
+	end
+	if run.mover then
+		run.mover:Destroy()
+		run.mover = nil
+	end
 	if run.attachment then
 		run.attachment:Destroy()
 		run.attachment = nil
 	end
-	if run.root.Parent then
-		-- keep vertical velocity, drop horizontal dash momentum
+	if run.root and run.root.Parent then
+		-- keep vertical velocity, drop horizontal dash momentum and any spin
 		local v = run.root.AssemblyLinearVelocity
 		run.root.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0)
+		run.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 	end
+end
+
+function InfDash.setEnabled(on)
+	State.InfDashActive = on
+	local char = LocalPlayer.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	if humanoid then setAntiTrip(humanoid, on) end
+	if not on then InfDash.cancel() end
 end
 
 function InfDash.cancel()
@@ -1142,8 +1273,18 @@ function InfDash.cancel()
 	if run.stepConn then run.stepConn:Disconnect() end
 	if run.conn then run.conn:Disconnect() end
 	stopMove(run)
-	if run.humanoid and run.humanoid.Parent and run.autoRotate ~= nil then
-		run.humanoid.AutoRotate = run.autoRotate
+	if run.humanoid and run.humanoid.Parent then
+		if run.autoRotate ~= nil then
+			run.humanoid.AutoRotate = run.autoRotate
+		end
+		setAntiTrip(run.humanoid, State.InfDashActive)
+	end
+	if run.ghostedParts then
+		for part, origCollide in pairs(run.ghostedParts) do
+			if part.Parent then
+				pcall(function() part.CanCollide = origCollide end)
+			end
+		end
 	end
 	for _, entry in ipairs(run.joints) do
 		if entry.joint.Parent then
@@ -1161,20 +1302,40 @@ function InfDash.start()
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not humanoid or not root or humanoid.Health <= 0 or humanoid.Sit then return end
 
+	setAntiTrip(humanoid, true)
+
 	local dir = dashDirection(humanoid, root)
 	if not dir then return end
 
-	-- Stop short of walls: rays from head, chest and feet; the nearest hit wins
+	-- Stop short of real walls, but ignore every player character and NPC
+	local exclude = { char }
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player.Character then table.insert(exclude, player.Character) end
+	end
+
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { char }
+	params.FilterDescendantsInstances = exclude
 	params.RespectCanCollide = true
 
 	local distance = Config.DashDistance
-	for _, height in ipairs({ 1.5, 0, -2 }) do
+	for _, height in ipairs({ 1.5, 0, -1.2 }) do
 		local origin = root.Position + Vector3.new(0, height, 0)
-		local hit = workspace:Raycast(origin, dir * (Config.DashDistance + 2), params)
-		if hit then distance = math.min(distance, math.max(hit.Distance - 2, 0)) end
+		for _ = 1, 12 do
+			local hit = workspace:Raycast(origin, dir * (Config.DashDistance + 2), params)
+			if not hit then break end
+			local actor = actorModelOf(hit.Instance, char)
+			if actor then
+				table.insert(exclude, actor)
+				params.FilterDescendantsInstances = exclude
+			else
+				-- Ignore walkable slopes/ramps (Normal.Y > 0.5) so inclines don't block the dash
+				if not hit.Normal or hit.Normal.Y <= 0.5 then
+					distance = math.min(distance, math.max(hit.Distance - 2, 0))
+				end
+				break
+			end
+		end
 	end
 	if distance < 1 then return end
 
@@ -1193,6 +1354,23 @@ function InfDash.start()
 	mover.VectorVelocity = dir * (distance / Config.DashTime)
 	mover.Parent = root
 
+	-- Lock root upright so floor seams or bumps can never tip or spin the character
+	local look = root.CFrame.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	if flatLook.Magnitude < 0.01 then flatLook = dir else flatLook = flatLook.Unit end
+
+	local gyro = Instance.new("AlignOrientation")
+	gyro.Name = "ZenDashGyro"
+	gyro.Attachment0 = attachment
+	gyro.Mode = Enum.OrientationAlignmentMode.OneAttachment
+	gyro.RigidityEnabled = true
+	gyro.MaxTorque = math.huge
+	gyro.Responsiveness = 200
+	gyro.CFrame = CFrame.new(Vector3.new(0, 0, 0), flatLook)
+	gyro.Parent = root
+
+	root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+
 	local prevAutoRotate = humanoid.AutoRotate
 	humanoid.AutoRotate = false
 
@@ -1203,13 +1381,18 @@ function InfDash.start()
 		dir = dir,
 		attachment = attachment,
 		mover = mover,
+		gyro = gyro,
 		joints = dashJoints(char, humanoid),
+		ghostedParts = {},
+		ghostedModels = {},
 		startedAt = os.clock(),
 	}
 	InfDash.run = run
 
-	-- Runs for the entire Config.DashTime (0.6 s): ease in, hold the tilt in
-	-- the dash direction, ease out at the end, then restore every joint.
+	collectPhaseTargets(run, char, root)
+
+	-- Runs for the entire Config.DashTime (0.6 s): keep phasing through
+	-- players/NPCs, keep root upright, hold the directional tilt, then restore.
 	local function stepDash()
 		if InfDash.run ~= run then return end
 		local t = os.clock() - run.startedAt
@@ -1218,12 +1401,16 @@ function InfDash.start()
 			return
 		end
 
+		setAntiTrip(humanoid, true)
+		root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		maintainPhase(run, char, root)
+
 		local fadeOutStart = math.max(POSE_IN, Config.DashTime - POSE_OUT)
 		local weight = smooth(t / POSE_IN) * (1 - smooth((t - fadeOutStart) / POSE_OUT))
 
-		local look = root.CFrame.LookVector
+		local curLook = root.CFrame.LookVector
 		local right = root.CFrame.RightVector
-		local fwdDot = math.clamp(look.X * run.dir.X + look.Z * run.dir.Z, -1, 1)
+		local fwdDot = math.clamp(curLook.X * run.dir.X + curLook.Z * run.dir.Z, -1, 1)
 		local rightDot = math.clamp(right.X * run.dir.X + right.Z * run.dir.Z, -1, 1)
 
 		for _, entry in ipairs(run.joints) do
@@ -1239,12 +1426,31 @@ function InfDash.start()
 	run.conn = RunService.Heartbeat:Connect(stepDash)
 end
 
+RootJanitor.connect(LocalPlayer.CharacterAdded, function(char)
+	if not State.InfDashActive then return end
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if humanoid and State.InfDashActive then
+		setAntiTrip(humanoid, true)
+	end
+end)
+if State.InfDashActive and LocalPlayer.Character then
+	local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid then setAntiTrip(humanoid, true) end
+end
+
 RootJanitor.connect(UserInputService.InputBegan, function(input, gameProcessed)
 	if gameProcessed or Binds.session or not State.InfDashActive then return end
 	if input.KeyCode == Config.DashKey then InfDash.start() end
 end)
 
-RootJanitor.add({ clean = function() InfDash.cancel() end })
+RootJanitor.add({
+	clean = function()
+		InfDash.cancel()
+		local char = LocalPlayer.Character
+		local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+		if humanoid then setAntiTrip(humanoid, false) end
+	end,
+})
 
 -- =====================================================================
 --  6 · CONTROL PANEL (single Misc column)
@@ -1565,8 +1771,7 @@ addSectionLabel("combat")
 addToggle("inf dash · " .. Config.DashKey.Name,
 	function() return State.InfDashActive end,
 	function(v)
-		State.InfDashActive = v
-		if not v then InfDash.cancel() end
+		InfDash.setEnabled(v)
 		markDirty()
 	end
 )
