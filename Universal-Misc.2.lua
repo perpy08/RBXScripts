@@ -982,6 +982,8 @@ AutoCast.sync()
 --   · Phase-through: ignores players and NPCs in the wall probe and disables
 --     CanCollide on their body parts on RunService.Stepped for the duration
 --     of the dash, restoring every part when the dash finishes.
+--   · Vertical hold: an airborne dash pins Y velocity to 0 so you don't
+--     nose-dive; gravity resumes only when the dash hits max length.
 --   · Directional pose: applied on RunService.Stepped (right after the
 --     Animator steps), wiping Transform on posed joints for the full 0.6 s.
 local InfDash = { run = nil, lastEnd = 0 }
@@ -1015,6 +1017,19 @@ local SELF_LIMBS = {
 local function smooth(x)
 	x = math.clamp(x, 0, 1)
 	return x * x * (3 - 2 * x)
+end
+
+-- Vertical hold. While airborne the dash pins Y velocity to 0 (MaxAxesForce.Y
+-- = huge against VectorVelocity.Y = 0), so a mid-air dash carries you the full
+-- 30 studs without nose-diving — gravity only resumes once the dash reaches
+-- its max length and the mover is destroyed. Grounded dashes leave Y alone so
+-- slopes and steps still work, and an active hold-Space hover (multi jump)
+-- keeps owning vertical.
+local function applyVerticalHold(mover, humanoid)
+	local hovering = State.MultiJumpActive
+		and UserInputService:IsKeyDown(Enum.KeyCode.Space)
+	local hold = (not hovering) and humanoid.FloorMaterial == Enum.Material.Air
+	mover.MaxAxesForce = Vector3.new(math.huge, hold and math.huge or 0, math.huge)
 end
 
 -- Prevent the Humanoid from entering FallingDown / Ragdoll (the states that
@@ -1355,8 +1370,9 @@ function InfDash.start()
 	mover.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
 	mover.ForceLimitMode = Enum.ForceLimitMode.PerAxis
 	mover.MaxAxesForce = Vector3.new(math.huge, 0, math.huge)
-	mover.VectorVelocity = dir * (distance / Config.DashTime)
+	mover.VectorVelocity = dir * (distance / Config.DashTime)   -- dir is horizontal, so Y is 0
 	mover.Parent = root
+	applyVerticalHold(mover, humanoid)
 
 	-- Lock root upright so floor seams or bumps can never tip or spin the character
 	local look = root.CFrame.LookVector
@@ -1408,6 +1424,9 @@ function InfDash.start()
 		setAntiTrip(humanoid, true)
 		root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 		maintainPhase(run, char, root)
+		-- re-asserted every frame: running off a ledge starts the hold,
+		-- touching down mid-dash releases it
+		applyVerticalHold(run.mover, humanoid)
 
 		local fadeOutStart = math.max(POSE_IN, Config.DashTime - POSE_OUT)
 		local weight = smooth(t / POSE_IN) * (1 - smooth((t - fadeOutStart) / POSE_OUT))
