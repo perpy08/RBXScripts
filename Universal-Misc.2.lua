@@ -42,6 +42,7 @@ local Config = {
 	DashKey            = Enum.KeyCode.Q,
 	DashDistance       = 30,   -- studs covered by one dash
 	DashTime           = 0.6,  -- seconds the dash + pose run (30 studs = 50 studs/s)
+	DashHoldEnd        = 0.75, -- fraction of an airborne dash that holds altitude
 	DashCooldown       = 0.05, -- "infinite": just debounces key repeat
 	AutoCastMinSeconds = 0.02, -- floor for the interval (the frame rate caps it anyway)
 	AutoCastTapSeconds = 0.03, -- how long each injected press is held down
@@ -982,8 +983,8 @@ AutoCast.sync()
 --   · Phase-through: ignores players and NPCs in the wall probe and disables
 --     CanCollide on their body parts on RunService.Stepped for the duration
 --     of the dash, restoring every part when the dash finishes.
---   · Vertical hold: an airborne dash pins Y velocity to 0 so you don't
---     nose-dive; gravity resumes only when the dash hits max length.
+--   · Vertical hold: an airborne dash holds altitude for the first 75% of
+--     its length, then gravity resumes for the final 25%.
 --   · Directional pose: applied on RunService.Stepped (right after the
 --     Animator steps), wiping Transform on posed joints for the full 0.6 s.
 local InfDash = { run = nil, lastEnd = 0 }
@@ -1019,16 +1020,20 @@ local function smooth(x)
 	return x * x * (3 - 2 * x)
 end
 
--- Vertical hold. While airborne the dash pins Y velocity to 0 (MaxAxesForce.Y
--- = huge against VectorVelocity.Y = 0), so a mid-air dash carries you the full
--- 30 studs without nose-diving — gravity only resumes once the dash reaches
--- its max length and the mover is destroyed. Grounded dashes leave Y alone so
--- slopes and steps still work, and an active hold-Space hover (multi jump)
--- keeps owning vertical.
-local function applyVerticalHold(mover, humanoid)
+-- Vertical hold, in two acts. For the first DashHoldEnd (75%) of an airborne
+-- dash the constraint pins Y velocity to 0 (MaxAxesForce.Y = huge against
+-- VectorVelocity.Y = 0) so you carry the distance flat instead of nose-diving.
+-- At the 75% mark the Y force limit drops to 0, gravity takes over from a
+-- standstill, and the final 25% of the dash is a normal fall — so the drop
+-- starts where you expect it and not before. Grounded dashes never hold
+-- (slopes and steps keep working), and an active hold-Space hover (multi
+-- jump) keeps owning vertical the whole way through.
+local function applyVerticalHold(mover, humanoid, t)
 	local hovering = State.MultiJumpActive
 		and UserInputService:IsKeyDown(Enum.KeyCode.Space)
-	local hold = (not hovering) and humanoid.FloorMaterial == Enum.Material.Air
+	local holdWindow = (t or 0) < Config.DashTime * Config.DashHoldEnd
+	local hold = holdWindow and (not hovering)
+		and humanoid.FloorMaterial == Enum.Material.Air
 	mover.MaxAxesForce = Vector3.new(math.huge, hold and math.huge or 0, math.huge)
 end
 
@@ -1372,7 +1377,7 @@ function InfDash.start()
 	mover.MaxAxesForce = Vector3.new(math.huge, 0, math.huge)
 	mover.VectorVelocity = dir * (distance / Config.DashTime)   -- dir is horizontal, so Y is 0
 	mover.Parent = root
-	applyVerticalHold(mover, humanoid)
+	applyVerticalHold(mover, humanoid, 0)
 
 	-- Lock root upright so floor seams or bumps can never tip or spin the character
 	local look = root.CFrame.LookVector
@@ -1425,8 +1430,9 @@ function InfDash.start()
 		root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 		maintainPhase(run, char, root)
 		-- re-asserted every frame: running off a ledge starts the hold,
-		-- touching down mid-dash releases it
-		applyVerticalHold(run.mover, humanoid)
+		-- touching down mid-dash releases it, and the hold window itself
+		-- expires at DashHoldEnd so the last quarter of the dash falls
+		applyVerticalHold(run.mover, humanoid, t)
 
 		local fadeOutStart = math.max(POSE_IN, Config.DashTime - POSE_OUT)
 		local weight = smooth(t / POSE_IN) * (1 - smooth((t - fadeOutStart) / POSE_OUT))
