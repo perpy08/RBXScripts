@@ -11,7 +11,7 @@
   · One shared Heartbeat for ghost trail + animation jitter
   · Per-character janitor -> zero connection leaks on respawn
   · Persistence: ZenGlitch_Misc.json (State restored on load)
-  · Auto-reload: Universal-Misc.lua on teleport
+  · Auto-reload: Universal-Misc.2.lua on teleport
   · Rev B: attack speed removed; Inf Dash (Q) + AutoCast (any key / mouse button) added
 =====================================================================
 ]]
@@ -1026,10 +1026,14 @@ local function setAntiTrip(humanoid, enabled)
 		humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, not enabled)
 	end)
 	if enabled then
-		local ok, state = pcall(function() return humanoid:GetState() end)
-		if ok and (state == Enum.HumanoidStateType.FallingDown
-			or state == Enum.HumanoidStateType.Ragdoll
-			or state == Enum.HumanoidStateType.PlatformStand) then
+		-- Read the state's *name* inside the pcall: PlatformStand is not a
+		-- member of Enum.HumanoidStateType on every engine build, and
+		-- indexing it directly crashed the boot. Comparing the name string
+		-- also sidesteps type() returning "userdata" for EnumItems.
+		local ok, stateName = pcall(function() return humanoid:GetState().Name end)
+		if ok and (stateName == "FallingDown"
+			or stateName == "Ragdoll"
+			or stateName == "PlatformStand") then
 			humanoid.PlatformStand = false
 			pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Running) end)
 		end
@@ -2115,7 +2119,7 @@ PanelGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 -- Persist immediately so a fresh reload keeps the panel's setup
 saveSettings()
 
--- Auto-reload across teleports (Universal-Misc.lua)
+-- Auto-reload across teleports (Universal-Misc.2.lua)
 if queue_on_teleport then
 	queue_on_teleport([[
 		repeat task.wait() until game:IsLoaded()
@@ -2125,10 +2129,8 @@ if queue_on_teleport then
 			_G.__ZenGlitchJanitor = nil
 		end
 
-		-- NOTE: this points at upstream. If you are running the refined
-		-- copy, re-point URL at your own hosted file — otherwise the
-		-- next teleport silently reverts every fix in this build.
-		local URL = "https://raw.githubusercontent.com/perpy08/RBXScripts/refs/heads/main/Universal-Misc.2.lua"
+		-- Auto-reload across teleports (Universal-Misc.2.lua)
+		local URL = "https://raw.githubusercontent.com/perpy08/RBXScripts/main/Universal-Misc.2.lua"
 		local src
 		if type(request) == "function" then          -- executor-native first
 			local ok, res = pcall(request, { Url = URL, Method = "GET" })
