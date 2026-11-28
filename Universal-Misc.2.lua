@@ -40,7 +40,7 @@ local Config = {
 	GhostMinInterval   = 0.06, -- floor on ghost spawn, whatever the multiplier
 	GhostMaxLive       = 8,    -- concurrent ghost clones in workspace
 	DashKey            = Enum.KeyCode.Q,
-	DashDistance       = 30,   -- studs covered by one dash
+	DashDistance       = 20,   -- studs covered by one dash
 	DashTime           = 0.4,  -- seconds the dash + pose run (30 studs = 50 studs/s)
 	DashHoldEnd        = 0.5, -- fraction of an airborne dash that holds altitude
 	DashCooldown       = 0.05, -- "infinite": just debounces key repeat
